@@ -544,10 +544,10 @@ def ask_agent(user_input: str, tool_results: str = "", chat_history: list[dict] 
     if tool_results:
         messages.append({
             "role": "user",
-            "content": f"Workspace: {WORKSPACE}\nTool results:\n{tool_results}\n\nUser request: {user_input}",
+            "content": f"Tool results:\n{tool_results}\n\nUser request: {user_input}",
         })
     else:
-        messages.append({"role": "user", "content": f"Workspace: {WORKSPACE}\n\nUser request: {user_input}"})
+        messages.append({"role": "user", "content": user_input})
 
     content = chat_completion(messages, temperature=0.1, json_mode=True)
     try:
@@ -606,11 +606,11 @@ def run_agent_turn(user_input: str, chat_id: str) -> None:
 
 
 def main() -> None:
-    device_name = get_device_name()
     chat_id = f"cli_{get_device_id()}_{uuid4().hex[:8]}"
 
     print()
-    print(f"  {_bold(_white('AuraCode'))}  {_dim('v1.0')}  {_dim('/help' + ' for commands')}")
+    print(f"  {_bold(_white('AuraCode'))}  {_dim('v1.0')}")
+    print(f"  {_dim('Type your message or /help for commands')}")
     print()
 
     while True:

@@ -10,22 +10,20 @@ if (-not $env:AURACODE_TERMINAL_CHILD) {
 
 $Host.UI.RawUI.WindowTitle = "AuraCode"
 Clear-Host
-Write-Host "    ___                     ______          __     " -ForegroundColor Cyan
-Write-Host "   /   |  __  __________ _ / ____/___  ____/ /__   " -ForegroundColor Cyan
-Write-Host "  / /| | / / / / ___/ __ ``/ /   / __ \/ __  / _ \  " -ForegroundColor Cyan
-Write-Host " / ___ |/ /_/ / /  / /_/ / /___/ /_/ / /_/ /  __/  " -ForegroundColor Cyan
-Write-Host "/_/  |_|\__,_/_/   \__,_/\____/\____/\__,_/\___/   " -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  AuraCode" -ForegroundColor Cyan
+Write-Host "  v1.0" -ForegroundColor DarkGray
 Write-Host ""
 
 if (-not (Test-Path ".env")) {
-  Copy-Item ".env.example" ".env"
-  Write-Host "Created .env. Edit it if needed, then run again."
-  exit 1
+  if (Test-Path ".env.example") { Copy-Item ".env.example" ".env" }
+  else { Set-Content ".env" "AI_PROVIDER=aurine`n" }
+  Write-Host "  Created .env config." -ForegroundColor Yellow
 }
 
 if (-not (Test-Path ".venv")) {
   python -m venv .venv
 }
 
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -q 2>$null
 .\.venv\Scripts\python.exe auracode.py
