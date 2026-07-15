@@ -943,6 +943,7 @@ def plugins(authorization: str | None = Header(default=None)) -> dict:
         {"id": "markdown", "name": "Markdown Editor", "description": "Create, edit, and export Markdown documents.", "icon": "MD", "category": "Research", "actions": ["create", "edit", "export", "template"]},
         {"id": "email-draft", "name": "Email Draft", "description": "Draft professional emails, responses, and campaigns.", "icon": "E", "category": "Productivity", "actions": ["draft", "reply", "template", "campaign"]},
         {"id": "scheduler", "name": "Scheduler", "description": "Set reminders, schedule tasks, manage to-do lists.", "icon": "SCH", "category": "Productivity", "actions": ["add", "list", "complete", "reminder"]},
+        {"id": "vscode", "name": "VS Code", "description": "Open workspace in VS Code, manage extensions, recent files.", "icon": "VS", "category": "Development", "actions": ["open", "extensions", "recent"]},
         {"id": "ruflo-core", "name": "Ruflo Core", "description": "Server orchestration, health checks, plugin discovery.", "icon": "R", "category": "Ruflo", "actions": ["health", "status", "plugins"]},
         {"id": "ruflo-swarm", "name": "Ruflo Swarm", "description": "Coordinate multiple agents as one team.", "icon": "RS", "category": "Ruflo", "actions": ["deploy", "status", "scale"]},
         {"id": "ruflo-autopilot", "name": "Ruflo Autopilot", "description": "Autonomous work loops with guardrails.", "icon": "RA", "category": "Ruflo", "actions": ["start", "stop", "status", "logs"]},
@@ -1065,17 +1066,22 @@ def run_safe_command(command: str, timeout: int = 30) -> str:
 def launch_aura(authorization: str | None = Header(default=None)) -> dict:
     require_user(authorization)
     project_dir = Path.cwd()
+    bat_file = project_dir / "start-auracode.bat"
+    if bat_file.exists():
+        subprocess.Popen(
+            ["cmd", "/c", "start", "cmd", "/k", str(bat_file)],
+            cwd=str(project_dir),
+        )
+        return {"status": "AuraCode terminal opened"}
     venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
     if not venv_python.exists():
         venv_python = project_dir / ".venv" / "bin" / "python.exe"
     script = project_dir / "auracode.py"
     if not venv_python.exists() or not script.exists():
         return {"error": "AuraCode not found."}
-    cmd = f'Start-Process powershell -ArgumentList \'NoExit\',\'-ExecutionPolicy\',\'Bypass\',\'-Command\',\'Set-Location \\"{project_dir}\\"; & \\"{venv_python}\\" \\"{script}\\""'
     subprocess.Popen(
-        ["powershell", "-Command", cmd],
+        ["cmd", "/c", "start", "cmd", "/k", str(venv_python), str(script)],
         cwd=str(project_dir),
-        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
     )
     return {"status": "AuraCode terminal opened"}
 
@@ -1548,8 +1554,27 @@ print(f"Max: {{max(nums)}}")
         from .agent_tools import execute_json_transform
         output = execute_json_transform(data, operation)
         return {"output": output, "action": "transform"}
+    elif action == "chart":
+        data = params.get("data", "[]")
+        chart_type = params.get("type", "bar")
+        try:
+            values = json.loads(data) if isinstance(data, str) else data
+            if isinstance(values, list) and values:
+                width = 50
+                max_val = max(v if isinstance(v, (int, float)) else 1 for v in values)
+                lines = []
+                for i, v in enumerate(values):
+                    val = v if isinstance(v, (int, float)) else 1
+                    bar_len = int((val / max_val) * width) if max_val > 0 else 0
+                    lines.append(f"  [{('█' * bar_len).ljust(width)}] {val}")
+                output = f"Chart ({chart_type}):\n" + "\n".join(lines)
+            else:
+                output = "Provide data as a JSON array of numbers."
+        except Exception:
+            output = "Provide data as a JSON array of numbers."
+        return {"output": output, "action": "chart"}
     else:
-        return {"output": "Actions: analyze_csv, analyze_json, statistics, transform", "action": "help"}
+        return {"output": "Actions: analyze_csv, analyze_json, statistics, chart, transform", "action": "help"}
 
 
 # ---------------------------------------------------------------------------
@@ -1642,8 +1667,35 @@ def _database_plugin_action(action: str, params: dict) -> dict:
         writer.writerow(cols)
         writer.writerows(rows)
         return {"output": output.getvalue()[:6000], "action": "export"}
+    elif action == "import":
+        table = params.get("table", "")
+        csv_data = params.get("csv", "")
+        if not table or not csv_data:
+            return {"output": "Provide 'table' and 'csv' (CSV string with header row).", "action": "import"}
+        import sqlite3, csv, io
+        conn = sqlite3.connect(db_path)
+        try:
+            reader = csv.reader(io.StringIO(csv_data))
+            headers = next(reader, None)
+            if not headers:
+                conn.close()
+                return {"output": "CSV must have a header row.", "action": "import"}
+            cols = ", ".join(h.strip() for h in headers)
+            conn.execute(f"CREATE TABLE IF NOT EXISTS {table} ({cols})")
+            placeholders = ", ".join("?" for _ in headers)
+            count = 0
+            for row in reader:
+                if row:
+                    conn.execute(f"INSERT INTO {table} VALUES ({placeholders})", row)
+                    count += 1
+            conn.commit()
+            conn.close()
+            return {"output": f"Imported {count} rows into '{table}'.", "action": "import"}
+        except Exception as exc:
+            conn.close()
+            return {"output": f"Import error: {exc}", "action": "import"}
     else:
-        return {"output": "Actions: tables, query, create_table, export", "action": "help"}
+        return {"output": "Actions: tables, query, create_table, import, export", "action": "help"}
 
 
 # ---------------------------------------------------------------------------
@@ -1675,8 +1727,22 @@ def _documents_plugin_action(action: str, params: dict) -> dict:
         conn.commit()
         conn.close()
         return {"output": "All document chunks deleted.", "action": "delete"}
+    elif action == "upload":
+        name = params.get("name", "document")
+        content = params.get("content", "")
+        if not content:
+            return {"output": "Provide 'content' to upload.", "action": "upload"}
+        from .rag import get_connection as rag_conn
+        conn = rag_conn()
+        chunks = [content[i:i+500] for i in range(0, len(content), 500)]
+        for i, chunk in enumerate(chunks):
+            conn.execute("INSERT INTO chunks (source, chunk_index, content, embedding) VALUES (?, ?, ?, ?)",
+                         (name, i, chunk, json.dumps([0.0] * 10)))
+        conn.commit()
+        conn.close()
+        return {"output": f"Uploaded '{name}' ({len(chunks)} chunks).", "action": "upload"}
     else:
-        return {"output": "Actions: list, search, delete", "action": "help"}
+        return {"output": "Actions: upload, list, search, delete", "action": "help"}
 
 
 # ---------------------------------------------------------------------------
@@ -1898,8 +1964,55 @@ def _markdown_plugin_action(action: str, params: dict) -> dict:
         }
         content = templates.get(template_type, templates["readme"])
         return {"output": content, "action": "template"}
+    elif action == "edit":
+        path = params.get("path", "")
+        find_text = params.get("find", "")
+        replace_text = params.get("replace", "")
+        if not path:
+            return {"output": "Provide 'path' to the markdown file.", "action": "edit"}
+        try:
+            target = Path.cwd() / path
+            if not target.exists():
+                return {"output": f"File '{path}' not found.", "action": "edit"}
+            text = target.read_text(encoding="utf-8", errors="ignore")
+            if find_text:
+                new_text = text.replace(find_text, replace_text)
+                target.write_text(new_text, encoding="utf-8")
+                count = text.count(find_text)
+                return {"output": f"Replaced {count} occurrence(s) in '{path}'.", "action": "edit"}
+            else:
+                return {"output": f"File contents ({len(text)} chars):\n{text[:3000]}", "action": "edit"}
+        except Exception as exc:
+            return {"output": f"Error: {exc}", "action": "edit"}
+    elif action == "export":
+        path = params.get("path", "")
+        fmt = params.get("format", "html")
+        if not path:
+            return {"output": "Provide 'path' to the markdown file.", "action": "export"}
+        try:
+            target = Path.cwd() / path
+            if not target.exists():
+                return {"output": f"File '{path}' not found.", "action": "export"}
+            text = target.read_text(encoding="utf-8", errors="ignore")
+            if fmt == "html":
+                import re
+                html = text
+                html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+                html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+                html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+                html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
+                html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
+                html = re.sub(r'```(\w*)\n(.*?)```', r'<pre><code>\2</code></pre>', html, flags=re.DOTALL)
+                html = html.replace("\n", "<br>\n")
+                out_path = target.with_suffix(".html")
+                out_path.write_text(f"<!DOCTYPE html>\n<html><head><title>{target.stem}</title></head><body>\n{html}\n</body></html>", encoding="utf-8")
+                return {"output": f"Exported to {out_path.name}", "action": "export"}
+            else:
+                return {"output": f"Export format '{fmt}' not supported. Use 'html'.", "action": "export"}
+        except Exception as exc:
+            return {"output": f"Error: {exc}", "action": "export"}
     else:
-        return {"output": "Actions: create, template", "action": "help"}
+        return {"output": "Actions: create, edit, export, template", "action": "help"}
 
 
 # ---------------------------------------------------------------------------
