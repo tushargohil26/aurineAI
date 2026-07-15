@@ -1,4 +1,4 @@
-# AuraCode Installer
+# AuraCode - Minimal AI Terminal Agent Installer
 # Run: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
 
 $InstallDir = "$env:USERPROFILE\.aurine"
@@ -6,6 +6,7 @@ $BinDir = "$InstallDir\bin"
 
 Write-Host ""
 Write-Host "  AuraCode Installer" -ForegroundColor Cyan
+Write-Host "  (AI terminal agent - lightweight install)" -ForegroundColor DarkGray
 Write-Host ""
 
 # 1) Check Python
@@ -19,22 +20,19 @@ if (-not $py) {
 }
 Write-Host "  [1/3] Python OK" -ForegroundColor Green
 
-# 2) Download AuraCode
+# 2) Download only essential files
 Write-Host "  [2/3] Downloading AuraCode..." -ForegroundColor Yellow
 
-# Remove old install if exists
-if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
-
-# Download zip from GitHub
 $zipUrl = "https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip"
-$zipFile = "$env:TEMP\auracode-install.zip"
+$zipFile = "$env:TEMP\auracode.zip"
 $extractDir = "$env:TEMP\auracode-extract"
 
+# Download zip
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile -UseBasicParsing
 } catch {
-    Write-Host "  [x] Download failed: $_" -ForegroundColor Red
+    Write-Host "  [x] Download failed" -ForegroundColor Red
     exit 1
 }
 
@@ -42,12 +40,26 @@ try {
 if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
 Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
 
-# Move contents to install dir (zip creates aurineAI-main/ subfolder)
-$srcDir = Get-ChildItem $extractDir -Directory | Select-Object -First 1
-if (-not $srcDir) { Write-Host "  [x] Extract failed" -ForegroundColor Red; exit 1 }
-if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
-Get-ChildItem $srcDir.FullName | ForEach-Object {
-    Copy-Item $_.FullName "$InstallDir\$($_.Name)" -Recurse -Force
+$srcDir = (Get-ChildItem $extractDir -Directory | Select-Object -First 1).FullName
+
+# Create clean install dir with ONLY auracode files
+if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+New-Item -ItemType Directory -Path "$InstallDir\app" -Force | Out-Null
+
+# Copy ONLY what auracode needs
+Copy-Item "$srcDir\auracode.py" "$InstallDir\auracode.py" -Force
+Copy-Item "$srcDir\app\__init__.py" "$InstallDir\app\__init__.py" -Force
+Copy-Item "$srcDir\app\llm.py" "$InstallDir\app\llm.py" -Force
+Copy-Item "$srcDir\app\config.py" "$InstallDir\app\config.py" -Force
+Copy-Item "$srcDir\app\device.py" "$InstallDir\app\device.py" -Force
+
+# Copy .env example
+if (Test-Path "$srcDir\.env.example") {
+    Copy-Item "$srcDir\.env.example" "$InstallDir\.env.example" -Force
+    if (-not (Test-Path "$InstallDir\.env")) {
+        Copy-Item "$srcDir\.env.example" "$InstallDir\.env" -Force
+    }
 }
 
 # Cleanup temp
@@ -56,37 +68,27 @@ Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "  Downloaded OK" -ForegroundColor Green
 
-# 3) Setup venv + deps + launcher
+# 3) Create venv + install ONLY needed packages
 Write-Host "  [3/3] Setting up..." -ForegroundColor Yellow
 
-# Init git so future updates work
-Set-Location $InstallDir
-& git init -q 2>$null
-& git remote add origin https://github.com/tushargohil26/aurineAI.git 2>$null
-& git add -A 2>$null
-& git commit -m "init" -q 2>$null
-
-# Create venv (or fix broken one)
-$venvPy = "$InstallDir\.venv\Scripts\python.exe"
+# Create venv
 if (-not (Test-Path "$InstallDir\.venv\pyvenv.cfg")) {
     if (Test-Path "$InstallDir\.venv") { Remove-Item "$InstallDir\.venv" -Recurse -Force -ErrorAction SilentlyContinue }
     & $py -m venv "$InstallDir\.venv"
 }
 
-# Install deps
-if (Test-Path $venvPy) {
-    & $venvPy -m pip install --upgrade pip -q 2>$null
-    if (Test-Path "requirements.txt") {
-        & $venvPy -m pip install -r requirements.txt -q 2>$null
-    }
-}
+# Install ONLY the 4 packages auracode needs
+$venvPy = "$InstallDir\.venv\Scripts\python.exe"
+& $venvPy -m pip install --upgrade pip -q 2>$null
+& $venvPy -m pip install openai httpx pydantic python-dotenv -q 2>$null
+
 Write-Host "  Dependencies OK" -ForegroundColor Green
 
-# Create bin dir
+# Create launchers
 if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
 
 # Inner launcher
-$innerBat = @"
+@"
 @echo off
 cd /d "$InstallDir"
 title AuraCode
@@ -96,15 +98,13 @@ if errorlevel 1 (
     echo  AuraCode crashed. Make sure Python 3.10+ is installed.
     pause
 )
-"@
-Set-Content "$BinDir\_auracode_inner.bat" $innerBat -NoNewline
+"@ | Set-Content "$BinDir\_auracode_inner.bat" -NoNewline
 
 # Outer launcher
-$outerBat = @"
+@"
 @echo off
 start "AuraCode" cmd /k "$BinDir\_auracode_inner.bat"
-"@
-Set-Content "$BinDir\auracode.bat" $outerBat -NoNewline
+"@ | Set-Content "$BinDir\auracode.bat" -NoNewline
 Copy-Item "$BinDir\auracode.bat" "$BinDir\auracode.cmd" -Force
 
 # Add to PATH
