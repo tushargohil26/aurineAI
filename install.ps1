@@ -45,45 +45,31 @@ foreach ($path in $searchPaths) {
     }
 }
 
-if (-not $sourceDir) {
-    Write-Host "  Source not found. Creating fresh install..." -ForegroundColor Yellow
-    $sourceDir = $AurineDir
-    New-Item -ItemType Directory -Path $AurineDir -Force | Out-Null
-    
-    # Create minimal Aurine
-    Write-Host "  Creating Aurine workspace..." -ForegroundColor Green
-    
-    $mainPy = @"
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
-import uvicorn
-
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-@app.get("/")
-async def root():
-    with open("static/index.html") as f:
-        return HTMLResponse(f.read())
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
-"@
-    New-Item -ItemType Directory -Path "$AurineDir\app" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$AurineDir\static" -Force | Out-Null
-    $mainPy | Out-File -FilePath "$AurineDir\app\main.py" -Encoding utf8
-    
-    "# Aurine AI" | Out-File -FilePath "$AurineDir\app\__init__.py" -Encoding utf8
-    "AI_PROVIDER=aurine" | Out-File -FilePath "$AurineDir\.env" -Encoding utf8
-    "fastapi>=0.115.0`nuvicorn[standard]>=0.34.0`npython-multipart>=0.0.20" | Out-File -FilePath "$AurineDir\requirements.txt" -Encoding utf8
-}
-
-# Copy source to .aurine if different
-if ($sourceDir -ne $AurineDir) {
-    if (-not (Test-Path "$AurineDir\app\main.py")) {
+# Copy source to .aurine
+if (-not (Test-Path "$AurineDir\app\main.py")) {
+    if ($sourceDir -and (Test-Path "$sourceDir\app\main.py")) {
         Write-Host "  Copying Aurine files..." -ForegroundColor Green
         Copy-Item -Path $sourceDir -Destination $AurineDir -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "  Source not found. Cloning from GitHub..." -ForegroundColor Yellow
+        try {
+            git clone https://github.com/tushargohil26/aurineAI.git $AurineDir 2>$null
+        } catch {
+            Write-Host "  Git not available. Downloading..." -ForegroundColor Yellow
+            $zipUrl = "https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip"
+            $zipPath = "$env:TEMP\aurine.zip"
+            try {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+                Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\aurine-extract" -Force
+                $src = Get-ChildItem "$env:TEMP\aurine-extract" | Select-Object -First 1
+                Copy-Item -Path $src.FullName -Destination $AurineDir -Recurse -Force
+                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                Remove-Item "$env:TEMP\aurine-extract" -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-Host "  Download failed. Please install Git first." -ForegroundColor Red
+            }
+        }
     }
 }
 
@@ -105,9 +91,13 @@ if (-not (Test-Path ".env")) {
 # Check Ollama
 $ollama = Get-Command ollama -ErrorAction SilentlyContinue
 if ($ollama) {
-    Write-Host "  Setting up AI models..." -ForegroundColor Green
-    ollama pull qwen2.5-coder:7b 2>$null
-    ollama pull nomic-embed-text 2>$null
+    Write-Host "  Ollama found. Pulling models (may take a few minutes)..." -ForegroundColor Green
+    try { ollama pull qwen2.5-coder:7b 2>$null } catch { }
+    try { ollama pull nomic-embed-text 2>$null } catch { }
+    Write-Host "  Done." -ForegroundColor Green
+} else {
+    Write-Host "  Ollama not installed. Using cloud AI instead." -ForegroundColor Yellow
+    Write-Host "  Set an API key in .env (OPENAI_API_KEY, GROQ_API_KEY, etc.)" -ForegroundColor Yellow
 }
 
 Pop-Location
