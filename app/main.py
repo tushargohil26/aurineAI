@@ -1066,23 +1066,23 @@ def run_safe_command(command: str, timeout: int = 30) -> str:
 def launch_aura(authorization: str | None = Header(default=None)) -> dict:
     require_user(authorization)
     project_dir = Path.cwd()
-    bat_file = project_dir / "start-auracode.bat"
-    if bat_file.exists():
-        subprocess.Popen(
-            ["cmd", "/c", "start", "cmd", "/k", str(bat_file)],
-            cwd=str(project_dir),
-        )
-        return {"status": "AuraCode terminal opened"}
     venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
     if not venv_python.exists():
         venv_python = project_dir / ".venv" / "bin" / "python.exe"
     script = project_dir / "auracode.py"
     if not venv_python.exists() or not script.exists():
-        return {"error": "AuraCode not found."}
-    subprocess.Popen(
-        ["cmd", "/c", "start", "cmd", "/k", str(venv_python), str(script)],
-        cwd=str(project_dir),
-    )
+        return {"error": "AuraCode not found. Run setup first."}
+    bat_file = project_dir / "start-auracode.bat"
+    if bat_file.exists():
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "cmd.exe", "/k", f'cd /d "{project_dir}" && "{venv_python}" "{script}"'],
+            cwd=str(project_dir),
+        )
+    else:
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "cmd.exe", "/k", f'cd /d "{project_dir}" && "{venv_python}" "{script}"'],
+            cwd=str(project_dir),
+        )
     return {"status": "AuraCode terminal opened"}
 
 
