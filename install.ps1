@@ -45,13 +45,13 @@ if (-not (Test-Path ".venv")) {
     & $py -m venv .venv 2>$null
 }
 
-# Install deps
-$pip = "$InstallDir\.venv\Scripts\pip.exe"
-& $pip install --upgrade pip -q 2>$null
+# Install deps using python -m pip (not pip.exe directly)
+$venvPy = "$InstallDir\.venv\Scripts\python.exe"
+& $venvPy -m pip install --upgrade pip -q 2>$null
 if (Test-Path "requirements.txt") {
-    & $pip install -r requirements.txt -q 2>$null
+    & $venvPy -m pip install -r requirements.txt -q 2>$null
     if ($LASTEXITCODE -ne 0) {
-        & $pip install fastapi uvicorn python-multipart openai pypdf python-dotenv bcrypt slowapi websockets pydantic httpx aiohttp psutil -q 2>$null
+        & $venvPy -m pip install fastapi uvicorn python-multipart openai pypdf python-dotenv bcrypt slowapi websockets pydantic httpx aiohttp psutil -q 2>$null
     }
 }
 Write-Host "  Dependencies OK" -ForegroundColor Green
