@@ -2471,6 +2471,22 @@ logoutButton.onclick = () => {
   authToken = "";
   showLogin("Logged out.");
 };
+const launchAuraButton = q("#launchAuraButton");
+if (launchAuraButton) {
+  launchAuraButton.onclick = async () => {
+    launchAuraButton.disabled = true;
+    launchAuraButton.textContent = "Opening...";
+    try {
+      await api("/api/launch-aura", { method: "POST" });
+    } catch (e) {
+      console.error(e);
+    }
+    setTimeout(() => {
+      launchAuraButton.disabled = false;
+      launchAuraButton.innerHTML = '<span class="plugin-rail-icon">&gt;_</span><span>Open AuraCode</span>';
+    }, 2000);
+  };
+}
 closePanel.onclick = () => cloudPanel.hidden = true;
 if (closeAgentCreate) closeAgentCreate.onclick = () => agentCreateModal.hidden = true;
 if (createAgentForm) {

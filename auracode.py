@@ -22,9 +22,26 @@ WORKSPACE = Path.cwd().resolve()
 SYSTEM_PROMPT = """
 You are AuraCode, a terminal coding agent running on the user's desktop.
 You can inspect files, write files, and run shell commands through tools.
+
+IMPORTANT: For simple greetings (hi, hello, hey, thanks, bye, etc.) or general questions
+that do NOT require file operations, just respond with a message and empty actions array.
+Do NOT call list_files for greetings or conversational messages.
+
+For questions about the codebase, respond directly if you know the answer.
+Only call list_files when you actually need to know which files exist.
+Only call read_file when you need to see file contents to answer a question.
+Only call write_file when the user explicitly asks to create or edit a file.
+Only call run_command when the user asks to run something.
+
 Always respond with valid JSON:
 {
-  "message": "short explanation for user",
+  "message": "your answer for the user",
+  "actions": []
+}
+
+When actions are needed:
+{
+  "message": "short explanation of what you will do",
   "actions": [
     {"tool": "list_files", "path": "."},
     {"tool": "read_file", "path": "app.py"},
@@ -33,10 +50,11 @@ Always respond with valid JSON:
     {"tool": "export_to_downloads", "source": "static", "name": "my-website"}
   ]
 }
+
 Rules:
 - Use relative paths only.
 - Never access files outside the current workspace.
-- Inspect the workspace with list_files before guessing filenames.
+- Do NOT auto-run list_files on every message. Only when needed.
 - If a file is not found, use list_files and choose the closest real file.
 - For this assistant app, the main UI files are usually static/index.html,
   static/styles.css, static/app.js, and the backend files are app/main.py,
@@ -62,20 +80,38 @@ def safe_path(path: str) -> Path:
     return candidate
 
 
+IGNORE_DIRS = {".git", ".venv", "__pycache__", "node_modules", ".mypy_cache", ".pytest_cache", "vector_store.sqlite3"}
+
+
 def list_files(path: str = ".") -> str:
     root = safe_path(path)
     if not root.exists():
         return "Path does not exist."
-    files = []
-    for item in root.rglob("*"):
-        if ".venv" in item.parts or "__pycache__" in item.parts:
-            continue
-        if item.is_file():
-            files.append(str(item.relative_to(WORKSPACE)))
-        if len(files) >= 200:
-            files.append("... truncated ...")
-            break
-    return "\n".join(files) or "No files found."
+    lines = []
+    def _walk(dir_path: Path, prefix: str = "", depth: int = 0):
+        if depth > 4:
+            return
+        entries = sorted(dir_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
+        entries = [e for e in entries if e.name not in IGNORE_DIRS and e.suffix != ".pyc"]
+        for i, entry in enumerate(entries):
+            is_last = i == len(entries) - 1
+            connector = "\\--- " if is_last else "|--- "
+            rel = entry.relative_to(WORKSPACE)
+            if entry.is_dir():
+                lines.append(f"{prefix}{connector}{entry.name}/")
+                ext = "    " if is_last else "|   "
+                _walk(entry, prefix + ext, depth + 1)
+            else:
+                size = entry.stat().st_size
+                if size > 1024 * 1024:
+                    size_str = f"{size // (1024*1024)}MB"
+                elif size > 1024:
+                    size_str = f"{size // 1024}KB"
+                else:
+                    size_str = f"{size}B"
+                lines.append(f"{prefix}{connector}{entry.name}  ({size_str})")
+    _walk(root)
+    return "\n".join(lines[:150]) + ("\n... more files" if len(lines) > 150 else "") or "No files found."
 
 
 def read_file(path: str) -> str:
@@ -223,8 +259,8 @@ def execute_actions(actions: list[dict]) -> str:
                 result = f"Unknown tool: {tool}"
         except Exception as exc:
             result = f"Error: {exc}"
-        results.append(f"[{tool}]\n{result}")
-    return "\n\n".join(results)
+        results.append(f"{_dim('[' + tool + ']')} {result}")
+    return "\n".join(results)
 
 
 def handle_builtin(user_input: str) -> bool:
@@ -242,7 +278,7 @@ def handle_builtin(user_input: str) -> bool:
         return False
     target.mkdir(parents=True, exist_ok=True)
     subprocess.Popen(["explorer", str(target)])
-    print(f"Opened: {target}")
+    print(f"\n  {_green('opened')} {target}\n")
     return True
 
 
@@ -253,73 +289,81 @@ def handle_slash_command(user_input: str) -> bool:
     command = command.lower().strip()
     value = value.strip()
     if command in {"help", "?"}:
-        print(
-            """
-Slash commands:
-  /help                 Show commands
-  /files [path]         List workspace files
-  /read <path>          Read a file
-  /run <command>        Run a safe shell command
-  /open                 Open this workspace folder
-  /projects             Open generated_projects
-  /downloads            Open Downloads
-  /export [path] [name] Export a file/folder to Downloads
-  /plugins              List real plugin names
-  /plugin <name>        Check Git/GitHub/VS Code/SQL/Terminal status
-  /connect <name>       Start real connect flow for GitHub/VS Code/Terminal
-"""
-        )
+        print(f"""
+  {_bold('Commands')}
+  {_dim('/files')} [path]         {_dim('list workspace files')}
+  {_dim('/read')}  <path>         {_dim('read a file')}
+  {_dim('/run')}   <command>      {_dim('run a safe shell command')}
+  {_dim('/open')}                  {_dim('open workspace folder')}
+  {_dim('/export')} [path] [name] {_dim('export to Downloads')}
+  {_dim('/plugins')}               {_dim('list available plugins')}
+  {_dim('/history')}               {_dim('view past chats')}
+  {_dim('/device')}                {_dim('show device info')}
+  {_dim('/quit')}                  {_dim('exit AuraCode')}
+""")
         return True
     if command == "plugins":
-        print("Plugins: git, github, vscode, sql, terminal, codebuilder, files, sites, media")
+        print(f"\n  {_bold('Plugins')}: git, github, vscode, sql, terminal, codebuilder, files, sites, media\n")
         return True
     if command == "plugin":
-        print(plugin_status(value or ""))
+        print(f"\n  {plugin_status(value or '')}\n")
         return True
     if command == "connect":
         if not value:
-            print("Usage: /connect github|vscode|terminal")
+            print(f"  {_dim('Usage: /connect github|vscode|terminal')}")
         else:
-            print(connect_plugin(value))
+            print(f"\n  {connect_plugin(value)}\n")
         return True
     if command in {"files", "ls"}:
-        print(list_files(value or "."))
+        print(f"\n  {_bold('Files')}\n")
+        for line in (list_files(value or ".") or "No files found.").split("\n"):
+            print(f"    {line}")
+        print()
         return True
     if command == "read":
         if not value:
-            print("Usage: /read <relative-file-path>")
+            print(f"  {_dim('Usage: /read <relative-file-path>')}")
         else:
-            print(read_file(value))
+            content = read_file(value)
+            print(f"\n  {_bold(value)}\n")
+            for line in content.split("\n"):
+                print(f"    {line}")
+            print()
         return True
     if command == "run":
         if not value:
-            print("Usage: /run <command>")
+            print(f"  {_dim('Usage: /run <command>')}")
         else:
-            print(run_command(value))
+            result = run_command(value)
+            print(f"\n  {_cyan('$')} {value}\n")
+            for line in result.split("\n"):
+                print(f"    {line}")
+            print()
         return True
     if command == "open":
         subprocess.Popen(["explorer", str(WORKSPACE)])
-        print(f"Opened: {WORKSPACE}")
+        print(f"\n  {_green('opened')} {WORKSPACE}\n")
         return True
     if command in {"projects", "generated"}:
         target = WORKSPACE / "generated_projects"
         target.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(["explorer", str(target)])
-        print(f"Opened: {target}")
+        print(f"\n  {_green('opened')} {target}\n")
         return True
     if command == "downloads":
         target = Path.home() / "Downloads"
         target.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(["explorer", str(target)])
-        print(f"Opened: {target}")
+        print(f"\n  {_green('opened')} {target}\n")
         return True
     if command == "export":
         parts = value.split(maxsplit=1)
         source = parts[0] if parts else "."
         name = parts[1] if len(parts) > 1 else "auracode-export"
-        print(export_to_downloads(source, name))
+        result = export_to_downloads(source, name)
+        print(f"\n  {_green('exported')} {result}\n")
         return True
-    print("Unknown slash command. Type /help.")
+    print(f"  {_dim('Unknown command. Type /help.')}")
     return True
 
 
@@ -353,6 +397,38 @@ def ask_agent(user_input: str, tool_results: str = "", chat_history: list[dict] 
         }
 
 
+def _print_bordered(text: str, color: str = "36") -> None:
+    lines = text.split("\n")
+    width = max(len(line) for line in lines) if lines else 40
+    print(f"\033[{color}m{lines[0]}\033[0m")
+    for line in lines[1:]:
+        print(f"  \033[{color}m{line}\033[0m")
+
+
+def _dim(text: str) -> str:
+    return f"\033[2m{text}\033[0m"
+
+
+def _bold(text: str) -> str:
+    return f"\033[1m{text}\033[0m"
+
+
+def _cyan(text: str) -> str:
+    return f"\033[36m{text}\033[0m"
+
+
+def _green(text: str) -> str:
+    return f"\033[32m{text}\033[0m"
+
+
+def _yellow(text: str) -> str:
+    return f"\033[33m{text}\033[0m"
+
+
+def _red(text: str) -> str:
+    return f"\033[31m{text}\033[0m"
+
+
 def run_agent_turn(user_input: str, chat_id: str) -> None:
     extract_facts_from_message(user_input)
     store_chat_message(chat_id, "user", user_input)
@@ -362,14 +438,31 @@ def run_agent_turn(user_input: str, chat_id: str) -> None:
     for _ in range(5):
         response = ask_agent(user_input, tool_results, history)
         message = response.get("message", "")
-        if message:
-            print(message)
-            store_chat_message(chat_id, "assistant", message, "auracode")
         actions = response.get("actions", [])
+
+        if message:
+            print(f"\n  {message}\n")
+            store_chat_message(chat_id, "assistant", message, "auracode")
+
         if not actions:
             return
+
+        for action in actions:
+            tool = action.get("tool", "")
+            detail = action.get("path", action.get("command", action.get("source", "")))
+            if tool == "write_file":
+                detail = action.get("path", "")
+            if detail and len(str(detail)) > 60:
+                detail = str(detail)[:57] + "..."
+            print(f"  {_cyan('>')}{_dim(tool)} {_dim(str(detail))}")
+
         tool_results = execute_actions(actions)
-        print(tool_results)
+        if tool_results.strip():
+            preview_lines = tool_results.strip().split("\n")[:15]
+            preview = "\n".join(preview_lines)
+            if len(tool_results.strip().split("\n")) > 15:
+                preview += f"\n  {_dim('... ' + str(len(tool_results.strip().split(chr(10))) - 15) + ' more lines')}"
+            print(f"  {_dim(preview)}\n")
 
 
 def main() -> None:
@@ -378,37 +471,32 @@ def main() -> None:
     device_name = get_device_name()
     chat_id = f"cli_{device_id}_{uuid4().hex[:8]}"
 
-    print(r"""
-    ___                     ______          __
-   /   |  __  __________ _ / ____/___  ____/ /__
-  / /| | / / / / ___/ __ `/ /   / __ \/ __  / _ \
- / ___ |/ /_/ / /  / /_/ / /___/ /_/ / /_/ /  __/
-/_/  |_|\__,_/_/   \__,_/\____/\____/\__,_/\___/
-""")
-    print(f"AuraCode terminal agent")
-    print(f"Device: {device_name}")
-    print(f"Device ID: {device_id}")
-    print(f"Workspace: {WORKSPACE}")
-    print(f"Data: Per-device storage enabled")
-    print("Type 'exit' to quit, '/history' to see past chats.\n")
+    print()
+    print(f"  {_bold(_cyan('AuraCode'))}  {_dim('terminal agent')}")
+    print(f"  {_dim(device_name)}  {_dim('workspace:')} {_dim(str(WORKSPACE))}")
+    print(f"  {_dim('/help')} commands  {_dim('/quit')} exit")
+    print()
 
     while True:
         try:
-            user_input = input("auracode> ").strip()
+            user_input = input(f"  {_green('>')} ").strip()
         except (EOFError, KeyboardInterrupt):
+            print()
             break
         if not user_input:
             continue
-        if user_input.lower() in {"exit", "quit"}:
+        if user_input.lower() in {"exit", "quit", "/quit"}:
+            print(f"\n  {_dim('goodbye')}\n")
             break
         if user_input.lower() == "/history":
             chats = get_all_chats()
             if chats:
-                print(f"\nYour past chats ({len(chats)} total):")
+                print(f"\n  {_bold('Past chats')} ({len(chats)} total):")
                 for c in chats[:10]:
-                    print(f"  {c['chat_id'][:16]}... | {c['message_count']} messages | {c['last_message'][:19]}")
+                    print(f"    {_dim(c['chat_id'][:16])}  {_dim(str(c['message_count']))} messages  {c['last_message'][:30]}")
             else:
-                print("No past chats yet.")
+                print("  No past chats yet.")
+            print()
             continue
         if user_input.lower() == "/device":
             info = {
@@ -418,7 +506,7 @@ def main() -> None:
                 "facts": len(recall_facts()),
                 "patterns": len(get_learned_patterns()),
             }
-            print(json.dumps(info, indent=2))
+            print(f"\n  {json.dumps(info, indent=4)}\n")
             continue
         try:
             if handle_builtin(user_input):
@@ -427,7 +515,7 @@ def main() -> None:
                 continue
             run_agent_turn(user_input, chat_id)
         except Exception as exc:
-            print(f"Error: {exc}")
+            print(f"\n  {_red('error:')} {exc}\n")
 
 
 if __name__ == "__main__":

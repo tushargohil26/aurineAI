@@ -284,6 +284,36 @@ select, option {
 .browse-agent {
   margin-bottom: 2px;
 }
+.launch-aura-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(45,212,191,.15), rgba(139,92,246,.15));
+  border: 1px solid rgba(45,212,191,.25);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all .2s;
+}
+.launch-aura-btn:hover {
+  background: linear-gradient(135deg, rgba(45,212,191,.25), rgba(139,92,246,.25));
+  border-color: rgba(45,212,191,.4);
+  transform: translateY(-1px);
+}
+.launch-aura-btn:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+  transform: none;
+}
+.launch-aura-btn .plugin-rail-icon {
+  font-family: monospace;
+  font-weight: 700;
+  color: #2dd4bf;
+  font-size: 14px;
+}
 .chat-item {
   display: grid;
   grid-template-columns: minmax(0,1fr) auto;

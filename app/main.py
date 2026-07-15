@@ -1061,6 +1061,25 @@ def run_safe_command(command: str, timeout: int = 30) -> str:
 # Plugin Action Router - Each plugin has real working sub-actions
 # ---------------------------------------------------------------------------
 
+@app.post("/api/launch-aura")
+def launch_aura(authorization: str | None = Header(default=None)) -> dict:
+    require_user(authorization)
+    project_dir = Path.cwd()
+    venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        venv_python = project_dir / ".venv" / "bin" / "python.exe"
+    script = project_dir / "auracode.py"
+    if not venv_python.exists() or not script.exists():
+        return {"error": "AuraCode not found."}
+    cmd = f'Start-Process powershell -ArgumentList \'NoExit\',\'-ExecutionPolicy\',\'Bypass\',\'-Command\',\'Set-Location \\"{project_dir}\\"; & \\"{venv_python}\\" \\"{script}\\""'
+    subprocess.Popen(
+        ["powershell", "-Command", cmd],
+        cwd=str(project_dir),
+        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+    )
+    return {"status": "AuraCode terminal opened"}
+
+
 @app.post("/plugins/action")
 def plugin_action(request: PluginActionRequest, authorization: str | None = Header(default=None)) -> dict:
     require_user(authorization)
