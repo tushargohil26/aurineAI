@@ -42,10 +42,13 @@ try {
 if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
 Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
 
-# Move to install dir
+# Move contents to install dir (zip creates aurineAI-main/ subfolder)
 $srcDir = Get-ChildItem $extractDir -Directory | Select-Object -First 1
 if (-not $srcDir) { Write-Host "  [x] Extract failed" -ForegroundColor Red; exit 1 }
-Move-Item $srcDir.FullName $InstallDir -Force
+if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
+Get-ChildItem $srcDir.FullName | ForEach-Object {
+    Copy-Item $_.FullName "$InstallDir\$($_.Name)" -Recurse -Force
+}
 
 # Cleanup temp
 Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
@@ -63,13 +66,14 @@ Set-Location $InstallDir
 & git add -A 2>$null
 & git commit -m "init" -q 2>$null
 
-# Create venv
-if (-not (Test-Path ".venv")) {
-    & $py -m venv .venv
+# Create venv (or fix broken one)
+$venvPy = "$InstallDir\.venv\Scripts\python.exe"
+if (-not (Test-Path "$InstallDir\.venv\pyvenv.cfg")) {
+    if (Test-Path "$InstallDir\.venv") { Remove-Item "$InstallDir\.venv" -Recurse -Force -ErrorAction SilentlyContinue }
+    & $py -m venv "$InstallDir\.venv"
 }
 
 # Install deps
-$venvPy = "$InstallDir\.venv\Scripts\python.exe"
 if (Test-Path $venvPy) {
     & $venvPy -m pip install --upgrade pip -q 2>$null
     if (Test-Path "requirements.txt") {
