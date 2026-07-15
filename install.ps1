@@ -31,8 +31,10 @@ Write-Host "  [2/4] Git OK" -ForegroundColor Green
 Write-Host "  [3/4] Downloading AuraCode..." -ForegroundColor Yellow
 if (Test-Path "$InstallDir\.git") {
     Set-Location $InstallDir
-    & git fetch origin main -q 2>$null
-    & git reset --hard origin/main -q 2>$null
+    $ErrorActionPreference = "SilentlyContinue"
+    & git fetch origin main 2>$null
+    & git reset --hard origin/main 2>$null
+    $ErrorActionPreference = "Stop"
 } else {
     if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
     & git clone https://github.com/tushargohil26/aurineAI.git $InstallDir 2>$null
