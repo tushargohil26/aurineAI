@@ -33,39 +33,40 @@ if (Test-Path "$InstallDir\.git") {
     Set-Location $InstallDir
     & git fetch origin main -q 2>$null
     & git reset --hard origin/main -q 2>$null
-    & git clean -fd -q 2>$null
 } else {
     if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
     & git clone https://github.com/tushargohil26/aurineAI.git $InstallDir 2>$null
 }
 Set-Location $InstallDir
 
-# Create venv if missing
+# Create venv if missing (skip if already exists)
 if (-not (Test-Path ".venv")) {
-    & $py -m venv .venv 2>$null
+    Write-Host "  Creating virtual environment..." -ForegroundColor Yellow
+    & $py -m venv .venv
 }
 
-# Install deps using python -m pip (not pip.exe directly)
+# Install deps
 $venvPy = "$InstallDir\.venv\Scripts\python.exe"
-& $venvPy -m pip install --upgrade pip -q 2>$null
-if (Test-Path "requirements.txt") {
-    & $venvPy -m pip install -r requirements.txt -q 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        & $venvPy -m pip install fastapi uvicorn python-multipart openai pypdf python-dotenv bcrypt slowapi websockets pydantic httpx aiohttp psutil -q 2>$null
+if (Test-Path $venvPy) {
+    & $venvPy -m pip install --upgrade pip -q 2>$null
+    if (Test-Path "requirements.txt") {
+        & $venvPy -m pip install -r requirements.txt -q 2>$null
     }
+    Write-Host "  Dependencies OK" -ForegroundColor Green
+} else {
+    Write-Host "  [!] venv python not found at $venvPy" -ForegroundColor Red
 }
-Write-Host "  Dependencies OK" -ForegroundColor Green
 
 # 4) Create launcher
 Write-Host "  [4/4] Installing auracode command..." -ForegroundColor Yellow
 if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
 
-# Clean inner launcher - runs inside the new terminal
+# Inner launcher - runs inside the new terminal
 $innerBat = @"
 @echo off
 cd /d "$InstallDir"
 title AuraCode
-".venv\Scripts\python.exe" auracode.py
+.venv\Scripts\python.exe auracode.py
 if errorlevel 1 (
     echo.
     echo  AuraCode crashed. Make sure Python 3.10+ is installed.
@@ -100,18 +101,13 @@ if ($curPath -notlike "*$BinDir*") {
 }
 
 # Remove old broken PATH entries
-$oldPaths = @("$env:USERPROFILE\.auracode", "$env:USERPROFILE\.aurine\bin")
+$oldPaths = @("$env:USERPROFILE\.auracode")
 foreach ($op in $oldPaths) {
     if ($curPath -like "*$op*") {
         $cleaned = ($curPath -split ";" | Where-Object { $_ -ne $op }) -join ";"
         [Environment]::SetEnvironmentVariable("Path", $cleaned, "User")
         $curPath = $cleaned
     }
-}
-# Re-add our bin if it was removed
-$finalPath = [Environment]::GetEnvironmentVariable("Path","User")
-if ($finalPath -notlike "*$BinDir*") {
-    [Environment]::SetEnvironmentVariable("Path","$finalPath;$BinDir","User")
 }
 
 Write-Host "  Done!" -ForegroundColor Green
