@@ -79,8 +79,7 @@ const previewFrame = q("#previewFrame");
 const closePreview = q("#closePreview");
 const settingsPage = q("#settingsPage");
 
-localStorage.removeItem(tokenKey);
-let authToken = sessionStorage.getItem(tokenKey) || "";
+let authToken = localStorage.getItem(tokenKey) || sessionStorage.getItem(tokenKey) || "";
 let profile = null;
 let chats = [];
 let customAgents = [];
@@ -2388,7 +2387,7 @@ loginForm.onsubmit = async (event) => {
       body: JSON.stringify({ name: loginName.value, email: loginEmail.value, password: loginPassword.value }),
     });
     authToken = data.token;
-    sessionStorage.setItem(tokenKey, authToken);
+    localStorage.setItem(tokenKey, authToken);
     applyProfile(data);
     showApp();
     await loadChats();
@@ -2404,7 +2403,7 @@ googleLoginButton.onclick = async () => {
       loginStatus.textContent = "Opening Google demo workspace...";
       const data = await api("/auth/google/demo", { method: "POST" });
       authToken = data.token;
-      sessionStorage.setItem(tokenKey, authToken);
+      localStorage.setItem(tokenKey, authToken);
       applyProfile(data);
       showApp();
       await loadChats();
@@ -2422,7 +2421,7 @@ demoLoginButton.onclick = async () => {
   try {
     const data = await api("/auth/demo", { method: "POST" });
     authToken = data.token;
-    sessionStorage.setItem(tokenKey, authToken);
+    localStorage.setItem(tokenKey, authToken);
     applyProfile(data);
     showApp();
     await loadChats();

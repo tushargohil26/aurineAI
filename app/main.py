@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 import subprocess
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from fastapi import Body, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
@@ -227,10 +227,15 @@ def db_connection() -> sqlite3.Connection:
             token TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
             created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL DEFAULT '',
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         )
         """
     )
+    try:
+        connection.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS workspace_settings (
@@ -384,8 +389,8 @@ def create_session(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     with db_connection() as connection:
         connection.execute(
-            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
-            (token, user_id, utc_now()),
+            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token, user_id, utc_now(), (datetime.utcnow() + timedelta(days=30)).isoformat() + "Z"),
         )
     return token
 
@@ -399,13 +404,24 @@ def auth_user(authorization: str | None = None) -> dict | None:
     with db_connection() as connection:
         row = connection.execute(
             """
-            SELECT users.id, users.name, users.email, users.provider
+            SELECT users.id, users.name, users.email, users.provider, sessions.expires_at
             FROM sessions
             JOIN users ON users.id = sessions.user_id
             WHERE sessions.token = ?
             """,
             (token,),
         ).fetchone()
+        if not row:
+            return None
+        expires = row["expires_at"]
+        if expires:
+            try:
+                exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+                if datetime.utcnow().replace(tzinfo=None) > exp_dt.replace(tzinfo=None):
+                    connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                    return None
+            except Exception:
+                pass
     return dict(row) if row else None
 
 
@@ -755,7 +771,7 @@ def google_callback(code: str = "") -> HTMLResponse:
     token = create_session(user_id)
     logger.info(f"Google login: {email}")
     return HTMLResponse(
-        f"""<script>sessionStorage.setItem('Aurine_auth_token', {json_dumps(token)});location.href='/';</script>"""
+        f"""<script>localStorage.setItem('Aurine_auth_token', {json_dumps(token)});location.href='/';</script>"""
     )
 
 
