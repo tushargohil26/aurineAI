@@ -89,15 +89,19 @@ if (-not (Test-Path ".env")) {
 }
 
 # Check Ollama
-$ollama = Get-Command ollama -ErrorAction SilentlyContinue
-if ($ollama) {
-    Write-Host "  Ollama found. Pulling models (may take a few minutes)..." -ForegroundColor Green
-    try { ollama pull qwen2.5-coder:7b 2>$null } catch { }
-    try { ollama pull nomic-embed-text 2>$null } catch { }
-    Write-Host "  Done." -ForegroundColor Green
-} else {
-    Write-Host "  Ollama not installed. Using cloud AI instead." -ForegroundColor Yellow
-    Write-Host "  Set an API key in .env (OPENAI_API_KEY, GROQ_API_KEY, etc.)" -ForegroundColor Yellow
+try {
+    $ollama = Get-Command ollama -ErrorAction SilentlyContinue
+    if ($ollama) {
+        Write-Host "  Ollama found. Pulling models (may take a few minutes)..." -ForegroundColor Green
+        $proc1 = Start-Process ollama -ArgumentList "pull qwen2.5-coder:7b" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
+        $proc2 = Start-Process ollama -ArgumentList "pull nomic-embed-text" -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
+        Write-Host "  Done." -ForegroundColor Green
+    } else {
+        Write-Host "  Ollama not installed. Using cloud AI instead." -ForegroundColor Yellow
+        Write-Host "  Set an API key in .env (OPENAI_API_KEY, GROQ_API_KEY, etc.)" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  Ollama setup skipped. You can configure AI provider later in .env" -ForegroundColor Yellow
 }
 
 Pop-Location
