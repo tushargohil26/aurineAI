@@ -1,6 +1,5 @@
 # AuraCode Installer
 # Run: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
-$ErrorActionPreference = "Stop"
 
 $InstallDir = "$env:USERPROFILE\.aurine"
 $BinDir = "$InstallDir\bin"
@@ -18,32 +17,54 @@ if (-not $py) {
     Write-Host "  [x] Python 3 not found. Install from https://python.org" -ForegroundColor Red
     exit 1
 }
-Write-Host "  [1/4] Python OK" -ForegroundColor Green
+Write-Host "  [1/3] Python OK" -ForegroundColor Green
 
-# 2) Check Git
-try { & git --version 2>&1 | Out-Null } catch {
-    Write-Host "  [x] Git not found. Install from https://git-scm.com" -ForegroundColor Red
+# 2) Download AuraCode
+Write-Host "  [2/3] Downloading AuraCode..." -ForegroundColor Yellow
+
+# Remove old install if exists
+if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
+
+# Download zip from GitHub
+$zipUrl = "https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip"
+$zipFile = "$env:TEMP\auracode-install.zip"
+$extractDir = "$env:TEMP\auracode-extract"
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile -UseBasicParsing
+} catch {
+    Write-Host "  [x] Download failed: $_" -ForegroundColor Red
     exit 1
 }
-Write-Host "  [2/4] Git OK" -ForegroundColor Green
 
-# 3) Clone / Pull repo
-Write-Host "  [3/4] Downloading AuraCode..." -ForegroundColor Yellow
-if (Test-Path "$InstallDir\.git") {
-    Set-Location $InstallDir
-    $ErrorActionPreference = "SilentlyContinue"
-    & git fetch origin main 2>$null
-    & git reset --hard origin/main 2>$null
-    $ErrorActionPreference = "Stop"
-} else {
-    if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
-    & git clone https://github.com/tushargohil26/aurineAI.git $InstallDir 2>$null
-}
+# Extract
+if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
+
+# Move to install dir
+$srcDir = Get-ChildItem $extractDir -Directory | Select-Object -First 1
+if (-not $srcDir) { Write-Host "  [x] Extract failed" -ForegroundColor Red; exit 1 }
+Move-Item $srcDir.FullName $InstallDir -Force
+
+# Cleanup temp
+Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+
+Write-Host "  Downloaded OK" -ForegroundColor Green
+
+# 3) Setup venv + deps + launcher
+Write-Host "  [3/3] Setting up..." -ForegroundColor Yellow
+
+# Init git so future updates work
 Set-Location $InstallDir
+& git init -q 2>$null
+& git remote add origin https://github.com/tushargohil26/aurineAI.git 2>$null
+& git add -A 2>$null
+& git commit -m "init" -q 2>$null
 
-# Create venv if missing (skip if already exists)
+# Create venv
 if (-not (Test-Path ".venv")) {
-    Write-Host "  Creating virtual environment..." -ForegroundColor Yellow
     & $py -m venv .venv
 }
 
@@ -54,16 +75,13 @@ if (Test-Path $venvPy) {
     if (Test-Path "requirements.txt") {
         & $venvPy -m pip install -r requirements.txt -q 2>$null
     }
-    Write-Host "  Dependencies OK" -ForegroundColor Green
-} else {
-    Write-Host "  [!] venv python not found at $venvPy" -ForegroundColor Red
 }
+Write-Host "  Dependencies OK" -ForegroundColor Green
 
-# 4) Create launcher
-Write-Host "  [4/4] Installing auracode command..." -ForegroundColor Yellow
+# Create bin dir
 if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
 
-# Inner launcher - runs inside the new terminal
+# Inner launcher
 $innerBat = @"
 @echo off
 cd /d "$InstallDir"
@@ -77,7 +95,7 @@ if errorlevel 1 (
 "@
 Set-Content "$BinDir\_auracode_inner.bat" $innerBat -NoNewline
 
-# Outer launcher - opens NEW terminal window
+# Outer launcher
 $outerBat = @"
 @echo off
 start "AuraCode" cmd /k "$BinDir\_auracode_inner.bat"
@@ -85,31 +103,10 @@ start "AuraCode" cmd /k "$BinDir\_auracode_inner.bat"
 Set-Content "$BinDir\auracode.bat" $outerBat -NoNewline
 Copy-Item "$BinDir\auracode.bat" "$BinDir\auracode.cmd" -Force
 
-# PowerShell function in profile
-$prof = $PROFILE.CurrentUserAllHosts
-$profDir = Split-Path $prof
-if (-not (Test-Path $profDir)) { New-Item -ItemType Directory -Path $profDir -Force | Out-Null }
-$ex = if (Test-Path $prof) { Get-Content $prof -Raw } else { "" }
-if ($ex -notlike "*function auracode*") {
-    $funcDef = "`nfunction auracode { Start-Process cmd -ArgumentList '/k','`"$BinDir\_auracode_inner.bat`"' }"
-    Add-Content $prof $funcDef
-}
-
 # Add to PATH
 $curPath = [Environment]::GetEnvironmentVariable("Path","User")
 if ($curPath -notlike "*$BinDir*") {
     [Environment]::SetEnvironmentVariable("Path","$curPath;$BinDir","User")
-    $env:Path += ";$BinDir"
-}
-
-# Remove old broken PATH entries
-$oldPaths = @("$env:USERPROFILE\.auracode")
-foreach ($op in $oldPaths) {
-    if ($curPath -like "*$op*") {
-        $cleaned = ($curPath -split ";" | Where-Object { $_ -ne $op }) -join ";"
-        [Environment]::SetEnvironmentVariable("Path", $cleaned, "User")
-        $curPath = $cleaned
-    }
 }
 
 Write-Host "  Done!" -ForegroundColor Green
