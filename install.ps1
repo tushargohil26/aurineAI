@@ -127,13 +127,12 @@ Write-Host "[5/5] Creating launcher..." -ForegroundColor White
 $desktop = [Environment]::GetFolderPath("Desktop")
 $launcher = @"
 @echo off
-title Aurine AI Assistant
+title AuraCode - AI Terminal Agent
 cd /d "$AurineDir"
-start http://localhost:8000
-call .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+call .venv\Scripts\python.exe auracode.py
 pause
 "@
-$launcher | Out-File -FilePath "$desktop\Aurine AI.bat" -Encoding ascii
+$launcher | Out-File -FilePath "$desktop\AuraCode.bat" -Encoding ascii
 
 Pop-Location
 
@@ -143,20 +142,20 @@ Write-Host "    INSTALL COMPLETE!" -ForegroundColor Green
 Write-Host "  ============================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Location: $AurineDir" -ForegroundColor White
-Write-Host "  Launcher: $desktop\Aurine AI.bat" -ForegroundColor White
+Write-Host "  Launcher: $desktop\AuraCode.bat" -ForegroundColor White
 Write-Host ""
-Write-Host "  START AURINE:" -ForegroundColor Cyan
-Write-Host "    Double-click 'Aurine AI' on Desktop" -ForegroundColor White
-Write-Host "    Or run: cd $AurineDir; .\run.ps1" -ForegroundColor White
+Write-Host "  START AURACODE:" -ForegroundColor Cyan
+Write-Host "    Double-click 'AuraCode' on Desktop" -ForegroundColor White
+Write-Host "    Or run: cd $AurineDir; python auracode.py" -ForegroundColor White
 Write-Host ""
-Write-Host "  Open browser: http://localhost:8000" -ForegroundColor Yellow
+Write-Host "  Type your message and AuraCode will answer." -ForegroundColor Yellow
+Write-Host "  Type 'exit' to quit." -ForegroundColor Yellow
 Write-Host ""
 
 # Ask to start now
-$start = Read-Host "Start Aurine now? (Y/n)"
+$start = Read-Host "Start AuraCode terminal now? (Y/n)"
 if ($start -ne "n" -and $start -ne "N") {
-    Start-Process "http://localhost:8000"
     Push-Location $AurineDir
-    & .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+    & .\.venv\Scripts\python.exe auracode.py
     Pop-Location
 }
