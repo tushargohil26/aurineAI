@@ -29,7 +29,8 @@ echo "  [3/4] Downloading..."
 if [ -d "$INSTALL_DIR/.git" ]; then cd "$INSTALL_DIR" && git pull -q 2>/dev/null; else git clone https://github.com/tushargohil26/aurineAI.git "$INSTALL_DIR" 2>/dev/null; fi
 cd "$INSTALL_DIR"
 if [ ! -d ".venv" ]; then "$PYTHON" -m venv .venv 2>/dev/null; fi
-.venv/bin/pip install -r requirements.txt -q 2>/dev/null
+.venv/bin/pip install --upgrade pip -q 2>/dev/null
+.venv/bin/pip install -r requirements.txt -q 2>/dev/null || .venv/bin/pip install fastapi uvicorn python-multipart openai pypdf python-dotenv bcrypt slowapi websockets pydantic httpx aiohttp psutil -q 2>/dev/null
 echo "  Done"
 
 # Install command
