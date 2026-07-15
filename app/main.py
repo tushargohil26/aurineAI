@@ -38,6 +38,7 @@ from .codegen import (
 from .config import get_settings
 from .llm import chat_completion, chat_completion_stream, chat_with_tools, supports_tools
 from .memory import memory_store
+from .device import get_device_id, get_user_id
 from .rag import answer_question, ingest_file, list_documents
 from .reasoning import ReasoningEngine, build_reasoning_context
 
@@ -2306,7 +2307,8 @@ def answer_question_stream(question: str, history: list[dict] | None = None, mod
     agent_id = classify_query(question)
     agent = get_agent(agent_id)
 
-    memory = memory_store.get("default")
+    user_id = get_user_id()
+    memory = memory_store.get(user_id)
     memory_context = ""
     if settings.memory_enabled:
         memory_context = memory.build_memory_context()
@@ -2393,7 +2395,8 @@ def chat(request: ChatRequest, req: Request) -> dict:
         agent_id = request.agent_mode.strip() or classify_query(question)
         agent = get_agent(agent_id)
 
-        memory = memory_store.get(request.user_id)
+        user_id = request.user_id or get_user_id()
+        memory = memory_store.get(user_id)
         memory_context = ""
         if settings.memory_enabled:
             memory_context = memory.build_memory_context()

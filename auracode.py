@@ -1,9 +1,19 @@
 ﻿import json
 import shutil
 import subprocess
+import re
 from pathlib import Path
+from datetime import datetime
+from uuid import uuid4
 
 from app.llm import chat_completion
+from app.device import (
+    get_device_id, get_user_id, get_device_name,
+    store_chat_message, get_chat_history, get_all_chats,
+    store_fact, recall_facts, store_preference, get_preferences,
+    learn_pattern, get_learned_patterns,
+    build_memory_context, extract_facts_from_message,
+)
 
 
 WORKSPACE = Path.cwd().resolve()
@@ -313,14 +323,26 @@ Slash commands:
     return True
 
 
-def ask_agent(user_input: str, tool_results: str = "") -> dict:
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
+def ask_agent(user_input: str, tool_results: str = "", chat_history: list[dict] = None) -> dict:
+    memory_ctx = build_memory_context()
+    system = SYSTEM_PROMPT
+    if memory_ctx:
+        system += f"\n\nUSER MEMORY (this device only):\n{memory_ctx}"
+
+    messages = [{"role": "system", "content": system}]
+
+    if chat_history:
+        for msg in chat_history[-20:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+    if tool_results:
+        messages.append({
             "role": "user",
             "content": f"Workspace: {WORKSPACE}\nTool results:\n{tool_results}\n\nUser request: {user_input}",
-        },
-    ]
+        })
+    else:
+        messages.append({"role": "user", "content": f"Workspace: {WORKSPACE}\n\nUser request: {user_input}"})
+
     content = chat_completion(messages, temperature=0.1, json_mode=True)
     try:
         return json.loads(content)
@@ -331,13 +353,18 @@ def ask_agent(user_input: str, tool_results: str = "") -> dict:
         }
 
 
-def run_agent_turn(user_input: str) -> None:
+def run_agent_turn(user_input: str, chat_id: str) -> None:
+    extract_facts_from_message(user_input)
+    store_chat_message(chat_id, "user", user_input)
+    history = get_chat_history(chat_id, limit=30)
+
     tool_results = ""
     for _ in range(5):
-        response = ask_agent(user_input, tool_results)
+        response = ask_agent(user_input, tool_results, history)
         message = response.get("message", "")
         if message:
             print(message)
+            store_chat_message(chat_id, "assistant", message, "auracode")
         actions = response.get("actions", [])
         if not actions:
             return
@@ -346,6 +373,11 @@ def run_agent_turn(user_input: str) -> None:
 
 
 def main() -> None:
+    device_id = get_device_id()
+    user_id = get_user_id()
+    device_name = get_device_name()
+    chat_id = f"cli_{device_id}_{uuid4().hex[:8]}"
+
     print(r"""
     ___                     ______          __
    /   |  __  __________ _ / ____/___  ____/ /__
@@ -353,23 +385,47 @@ def main() -> None:
  / ___ |/ /_/ / /  / /_/ / /___/ /_/ / /_/ /  __/
 /_/  |_|\__,_/_/   \__,_/\____/\____/\__,_/\___/
 """)
-    print("AuraCode terminal agent")
+    print(f"AuraCode terminal agent")
+    print(f"Device: {device_name}")
+    print(f"Device ID: {device_id}")
     print(f"Workspace: {WORKSPACE}")
-    print("Type 'exit' to quit.\n")
+    print(f"Data: Per-device storage enabled")
+    print("Type 'exit' to quit, '/history' to see past chats.\n")
 
     while True:
-        user_input = input("auracode> ").strip()
-        if user_input.lower() in {"exit", "quit"}:
+        try:
+            user_input = input("auracode> ").strip()
+        except (EOFError, KeyboardInterrupt):
             break
         if not user_input:
             continue
-
+        if user_input.lower() in {"exit", "quit"}:
+            break
+        if user_input.lower() == "/history":
+            chats = get_all_chats()
+            if chats:
+                print(f"\nYour past chats ({len(chats)} total):")
+                for c in chats[:10]:
+                    print(f"  {c['chat_id'][:16]}... | {c['message_count']} messages | {c['last_message'][:19]}")
+            else:
+                print("No past chats yet.")
+            continue
+        if user_input.lower() == "/device":
+            info = {
+                "device_id": device_id,
+                "user_id": user_id,
+                "device_name": device_name,
+                "facts": len(recall_facts()),
+                "patterns": len(get_learned_patterns()),
+            }
+            print(json.dumps(info, indent=2))
+            continue
         try:
             if handle_builtin(user_input):
                 continue
             if handle_slash_command(user_input):
                 continue
-            run_agent_turn(user_input)
+            run_agent_turn(user_input, chat_id)
         except Exception as exc:
             print(f"Error: {exc}")
 
