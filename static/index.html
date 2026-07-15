@@ -1,0 +1,243 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#070b12" />
+    <meta name="description" content="Aurine AI Assistant - Advanced AI with plugins, tools, and agents" />
+    <link rel="manifest" href="/static/manifest.json" />
+    <title>Aurine AI</title>
+    <link rel="stylesheet" href="/static/styles.css?v=aurine-layout-restore-2" />
+  </head>
+  <body>
+    <section id="loginScreen" class="login-screen">
+      <div class="login-orb"></div>
+      <form id="loginForm" class="login-card">
+        <div class="login-mark Aurine-logo"><span>Au</span></div>
+        <h1>Welcome to Aurine</h1>
+        <p>Sign in to use your workspace, settings, files, chats, projects, agents, and connected cloud tools.</p>
+        <input id="loginName" placeholder="Your name" autocomplete="name" />
+        <input id="loginEmail" type="email" placeholder="Email" autocomplete="email" required />
+        <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" required />
+        <button type="submit">Continue</button>
+        <button id="demoLoginButton" class="google-button" type="button">Demo login</button>
+        <button id="googleLoginButton" class="google-button" type="button">Continue with Google</button>
+        <div id="loginStatus" class="login-status"></div>
+      </form>
+    </section>
+
+    <div id="appShell" class="app-shell" hidden>
+      <aside class="rail">
+        <div class="rail-brand">
+          <div class="brand-glyph Aurine-logo"><span>Au</span></div>
+          <div>
+            <strong class="brand-word">Aurine</strong>
+            <span>Aurine</span>
+          </div>
+        </div>
+
+        <button id="newChatButton" class="nav-action active" type="button" data-panel="chat">New chat</button>
+        <button class="nav-action" type="button" data-panel="models">Models</button>
+        <button class="nav-action" type="button" data-panel="agents">Agents</button>
+        <button class="nav-action" type="button" data-panel="scheduled">Scheduled</button>
+        <button class="nav-action" type="button" data-panel="plugins">Plugins</button>
+        <button class="nav-action" type="button" data-panel="apiKeys">API keys</button>
+        <button class="nav-action" type="button" data-panel="sites">Sites</button>
+        <button class="nav-action" type="button" data-panel="project">Project</button>
+
+        <div class="section-label plugin-heading">
+          <span>Plugins</span>
+          <button id="browsePluginsButton" type="button" title="Browse all plugins">+</button>
+        </div>
+        <div id="pluginRailList" class="rail-plugin-list"></div>
+        <button id="browsePluginsRow" class="rail-plugin browse-plugin" type="button">
+          <span>All plugins</span>
+        </button>
+
+        <div class="section-label agent-heading">
+          <span>Agents</span>
+          <button id="browseAgentsButton" type="button" title="Browse agents">+</button>
+        </div>
+        <div id="agentRailList" class="rail-agent-list"></div>
+        <button id="browseAgentsRow" class="rail-agent browse-agent" type="button">
+          <span>Browse agents</span>
+        </button>
+
+        <div class="section-label">Chats</div>
+        <div id="chatList" class="chat-list"></div>
+
+        <div class="rail-spacer"></div>
+        <button id="workspaceButton" class="workspace-switcher" type="button">
+          <div id="workspaceAvatar" class="workspace-avatar">A</div>
+          <div>
+            <strong id="workspaceName">Aurine Workspace</strong>
+            <span id="workspaceUser">Signed in</span>
+          </div>
+        </button>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <strong id="topWorkspaceName">Aurine Workspace</strong>
+            <span id="topMode">Build, debug, connect, ship</span>
+          </div>
+          <div class="top-actions">
+            <label class="file-chip">+ File<input id="fileInput" type="file" multiple hidden /></label>
+            <label class="file-chip">+ Folder<input id="folderInput" type="file" multiple webkitdirectory directory hidden /></label>
+            <button id="clearDataButton" type="button">Clear data</button>
+            <button id="logoutButton" type="button">Logout</button>
+          </div>
+        </header>
+
+        <section id="messages" class="messages"></section>
+
+        <section id="emptyState" class="home">
+          <div class="hero-badge">Aurine</div>
+          <h1>What should we work on?</h1>
+          <p>One workspace for chat, files, code, sites, schedules, plugins, agents, and project execution.</p>
+          <form id="chatForm" class="codex-composer">
+            <textarea id="questionInput" rows="2" placeholder="Ask Aurine, build software, analyze data, migrate systems..."></textarea>
+            <div class="composer-actions">
+              <div class="left-tools">
+                <label class="plus-button" title="Upload files">+<input id="fileInputInline" type="file" multiple hidden /></label>
+                <button id="composerModelButton" class="model-chip" type="button">Model</button>
+                <button id="agentChip" class="agent-chip" type="button" hidden title="Remove agent"><span id="agentChipText"></span><strong>x</strong></button>
+              </div>
+              <button id="sendButton" type="submit" title="Send">↑</button>
+            </div>
+          </form>
+          <button class="choose-project" type="button" data-panel="project">Choose project</button>
+          <div class="suggestions">
+            <button type="button" data-prompt="Build a production-ready cloud SaaS app with frontend, backend, auth, database, deployment plan, and run commands.">Build a cloud SaaS app</button>
+            <button type="button" data-prompt="Create a PDF report for a software launch plan.">Create PDF</button>
+          </div>
+          <div id="homePluginGrid" class="home-plugin-grid"></div>
+        </section>
+
+        <section id="pluginsPage" class="plugins-page" hidden></section>
+        <section id="agentsPage" class="agents-page" hidden></section>
+        <section id="modelsPage" class="models-page" hidden></section>
+        <section id="apiKeysPage" class="api-keys-page" hidden></section>
+        <section id="settingsPage" class="settings-page" hidden></section>
+
+        <form id="floatingChatForm" class="floating-composer" hidden>
+          <label class="plus-button mini-plus" title="Upload files">+<input id="floatingFileInput" type="file" multiple hidden /></label>
+          <button id="floatingModelButton" class="model-chip compact" type="button">Model</button>
+          <button id="floatingAgentChip" class="agent-chip" type="button" hidden title="Remove agent"><span id="floatingAgentChipText"></span><strong>×</strong></button>
+          <textarea id="floatingQuestionInput" rows="1" placeholder="Ask Aurine..."></textarea>
+          <button type="submit" title="Send">↑</button>
+        </form>
+
+        <section id="workspacePanel" class="workspace-panel" hidden>
+          <div class="workspace-head">
+            <div>
+              <strong id="workspaceTitle">Project</strong>
+              <span id="workspaceSubtitle">Files and project tools</span>
+            </div>
+            <button id="closeWorkspace" type="button" title="Close">×</button>
+          </div>
+          <div class="workspace-grid">
+            <div id="workspaceFiles" class="workspace-files"></div>
+            <div class="workspace-editor">
+              <div class="editor-toolbar">
+                <select id="fileSelect"></select>
+                <button id="saveFileButton" type="button">Save</button>
+              </div>
+              <textarea id="fileEditor" spellcheck="false"></textarea>
+              <form id="commandForm" class="terminal-form">
+                <input id="commandInput" placeholder="Run command in this project" />
+                <button type="submit">Run</button>
+              </form>
+              <pre id="terminalOutput"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section id="previewPanel" class="preview-panel" hidden>
+          <div class="preview-head">
+            <strong id="previewTitle">Preview</strong>
+            <button id="closePreview" type="button" title="Close">×</button>
+          </div>
+          <iframe id="previewFrame" title="Project preview"></iframe>
+        </section>
+      </main>
+
+      <aside id="cloudPanel" class="cloud-panel" hidden>
+        <div class="panel-head">
+          <strong id="panelTitle">Panel</strong>
+          <button id="closePanel" type="button" title="Close">×</button>
+        </div>
+        <div id="panelBody" class="panel-body"></div>
+      </aside>
+    </div>
+
+    <section id="settingsModal" class="modal" hidden>
+      <form id="settingsForm" class="modal-card">
+        <h2>Workspace settings</h2>
+        <label>Name<input id="settingsName" /></label>
+        <label>Workspace name<input id="settingsWorkspace" /></label>
+        <label>Theme
+          <select id="settingsTheme">
+            <option value="aurora-3d">3D</option>
+            <option value="coder-night">Coding</option>
+            <option value="normal">Normal</option>
+            <option value="beauty">Beauty</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button id="closeSettings" type="button" title="Close">×</button>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="modelModal" class="modal" hidden>
+      <form id="modelForm" class="modal-card"></form>
+    </section>
+
+    <section id="agentCreateModal" class="modal" hidden>
+      <form id="createAgentForm" class="modal-card agent-create-card">
+        <div class="modal-title-row">
+          <h2>Create agent</h2>
+          <button id="closeAgentCreate" type="button" title="Close">×</button>
+        </div>
+        <p>Make a specialist agent with its own dedicated chat.</p>
+        <label>Name<input id="newAgentName" maxlength="48" placeholder="Agent name" required /></label>
+        <label>Description<input id="newAgentDetail" maxlength="140" placeholder="Short description" /></label>
+        <label>Instructions<textarea id="newAgentInstructions" rows="5" placeholder="Agent instructions, role, rules, and style..." required></textarea></label>
+        <div class="modal-actions">
+          <button type="submit">Create agent</button>
+        </div>
+      </form>
+    </section>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/php.min.js"></script>
+    <script src="/static/app.js?v=aurine-streaming-2"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/static/sw.js").catch(() => {});
+      }
+    </script>
+  </body>
+</html>
+
+

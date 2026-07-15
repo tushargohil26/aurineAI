@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#070b12"/>
+  <circle cx="256" cy="256" r="160" fill="none" stroke="#2dd4bf" stroke-width="8"/>
+  <circle cx="256" cy="256" r="100" fill="none" stroke="#7c3aed" stroke-width="6"/>
+  <text x="256" y="288" text-anchor="middle" font-family="monospace" font-size="120" font-weight="bold" fill="#2dd4bf">Au</text>
+</svg>

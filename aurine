@@ -1,0 +1,24 @@
+#!/bin/bash
+# Aurine AI - Standalone launcher
+# Place this file in /usr/local/bin to run 'aurine' from any terminal
+
+if [ -n "$AURINE_HOME" ]; then
+    AURINE_DIR="$AURINE_HOME"
+elif [ -d "$HOME/.aurine/app" ]; then
+    AURINE_DIR="$HOME/.aurine"
+elif [ -d "$(dirname "$0")/app" ]; then
+    AURINE_DIR="$(dirname "$0")"
+else
+    echo "Aurine not found. Install with: curl -fsSL https://raw.githubusercontent.com/aurine/aurine-ai/main/install.sh | bash"
+    exit 1
+fi
+
+cd "$AURINE_DIR"
+
+if [ ! -f ".venv/bin/python" ]; then
+    echo "Setting up Aurine..."
+    python3 -m venv .venv
+    .venv/bin/python -m pip install -r requirements.txt > /dev/null 2>&1
+fi
+
+.venv/bin/python -m app "$@"

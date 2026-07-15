@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+vector_store.sqlite3
+vector_store.sqlite3-shm
+vector_store.sqlite3-wal
+generated_projects/
+generated_artifacts/
+data/*
+!data/.gitkeep
+*.pid
+*.zip
+.DS_Store
+Thumbs.db
+node_modules/

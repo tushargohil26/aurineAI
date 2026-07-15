@@ -1,0 +1,23 @@
+﻿Aurine ready-to-run commands
+
+Desktop app:
+  Double-click START_AURINE.bat
+  Open http://127.0.0.1:8000
+
+AuraCode:
+  Double-click START_AURACODE.bat
+
+Mobile on same Wi-Fi:
+  Double-click START_AURINE_MOBILE_LAN.bat
+  Open the mobile URL printed in the terminal on your phone.
+
+Notes:
+  - Git, GitHub, VS Code, and SQL plugins run real local checks.
+  - Select agents from the left Agents panel, not from a chat dropdown.
+  - Cancel the selected agent from the chip inside the current chat composer.
+  - GitHub needs GitHub CLI login on that desktop to access a real account.
+  - VS Code needs the code command installed in PATH.
+  - Mobile browsers can use the Aurine web app through LAN, but AuraCode terminal runs on desktop only.
+  - Image, PDF, video-scene, document, and code creation requests create real files in generated_artifacts or generated_projects.
+
+

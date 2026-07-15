@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: my-ai-assistant
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_CHAT_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: DATA_DIR
+        value: /var/data/data
+      - key: VECTOR_DB
+        value: /var/data/vector_store.sqlite3
+      - key: GENERATED_PROJECTS_DIR
+        value: /var/data/generated_projects
+    disk:
+      name: ai-data
+      mountPath: /var/data
+      sizeGB: 1

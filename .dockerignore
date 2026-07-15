@@ -1,0 +1,7 @@
+.env
+.venv
+__pycache__
+*.pyc
+vector_store.sqlite3
+data
+.git
