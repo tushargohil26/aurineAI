@@ -1,161 +1,160 @@
-# ============================================
-#  AURINE AI - ONE COMMAND INSTALL & RUN
-#  Copy this entire line in PowerShell:
-#  irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
-# ============================================
-
-$ErrorActionPreference = "Continue"
-$AurineDir = "$env:USERPROFILE\.aurine"
-$GitHub = "https://github.com/tushargohil26/aurineAI.git"
+# AuraCode One-Line Installer
+# Run: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
+$ErrorActionPreference = "Stop"
 
 Write-Host ""
-Write-Host "  ============================================" -ForegroundColor Cyan
-Write-Host "    Aurine AI - Installing..." -ForegroundColor Cyan
-Write-Host "  ============================================" -ForegroundColor Cyan
+Write-Host "  AuraCode Installer" -ForegroundColor Cyan
+Write-Host "  =================" -ForegroundColor Cyan
 Write-Host ""
 
-# Step 1: Check/Install Python
-Write-Host "[1/5] Checking Python..." -ForegroundColor White
-$hasPython = $false
-try {
-    $pyVer = python --version 2>&1
-    if ($pyVer -match "Python 3") {
-        Write-Host "  Found: $pyVer" -ForegroundColor Green
-        $hasPython = $true
-    }
-} catch { }
+# Config
+$Repo = "https://github.com/tushargohil26/aurineAI.git"
+$InstallDir = "$env:USERPROFILE\aurine-ai-assistant"
+$AuracodeDir = "$env:USERPROFILE\.auracode"
 
-if (-not $hasPython) {
-    Write-Host "  Python 3 not found. Installing..." -ForegroundColor Yellow
+# Step 1: Check Python
+Write-Host "  [1/5] Checking Python..." -ForegroundColor Yellow
+$python = $null
+foreach ($cmd in @("python", "python3", "py")) {
     try {
-        winget install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements 2>$null
-        $env:PATH = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts;$env:PATH"
-        Write-Host "  Python installed." -ForegroundColor Green
-    } catch {
-        Write-Host "  Cannot auto-install Python." -ForegroundColor Red
-        Write-Host "  Download manually: https://python.org/downloads" -ForegroundColor Yellow
-        Write-Host "  Check 'Add Python to PATH' during install." -ForegroundColor Yellow
-        Write-Host ""
-        pause
-        exit 1
-    }
-}
-
-# Step 2: Clone or update from GitHub
-Write-Host "[2/5] Downloading Aurine AI..." -ForegroundColor White
-if (Test-Path "$AurineDir\app\main.py") {
-    Write-Host "  Updating existing install..." -ForegroundColor Green
-    Push-Location $AurineDir
-    git pull origin main --quiet 2>$null
-    Pop-Location
-} else {
-    if (Test-Path $AurineDir) {
-        Remove-Item -Path $AurineDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    
-    Write-Host "  Cloning from GitHub..." -ForegroundColor Green
-    $gitAvailable = Get-Command git -ErrorAction SilentlyContinue
-    
-    if ($gitAvailable) {
-        git clone $GitHub $AurineDir --quiet 2>$null
-    } else {
-        Write-Host "  Git not found. Downloading ZIP..." -ForegroundColor Yellow
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            $zipUrl = "https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip"
-            $zipPath = "$env:TEMP\aurine-download.zip"
-            $extractPath = "$env:TEMP\aurine-extract"
-            
-            Write-Host "  Downloading..." -ForegroundColor Green
-            Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
-            
-            Write-Host "  Extracting..." -ForegroundColor Green
-            if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
-            Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-            
-            $src = Get-ChildItem $extractPath | Where-Object { $_.PSIsContainer } | Select-Object -First 1
-            Copy-Item -Path $src.FullName -Destination $AurineDir -Recurse -Force
-            
-            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-Host "  Download failed: $_" -ForegroundColor Red
-            Write-Host "  Try installing Git: https://git-scm.com/download/win" -ForegroundColor Yellow
-            pause
-            exit 1
+        $ver = & $cmd --version 2>&1
+        if ($ver -match "Python 3\.\d+") {
+            $python = $cmd
+            Write-Host "        Found: $ver" -ForegroundColor Green
+            break
         }
-    }
+    } catch {}
 }
-
-if (-not (Test-Path "$AurineDir\app\main.py")) {
-    Write-Host "  ERROR: Download failed. Files not found." -ForegroundColor Red
-    pause
+if (-not $python) {
+    Write-Host "        Python 3 not found!" -ForegroundColor Red
+    Write-Host "        Install from: https://www.python.org/downloads/" -ForegroundColor Yellow
+    Write-Host "        Make sure to check 'Add Python to PATH' during install." -ForegroundColor Yellow
     exit 1
 }
 
-Write-Host "  Downloaded successfully." -ForegroundColor Green
-
-# Step 3: Create virtual environment and install dependencies
-Write-Host "[3/5] Installing dependencies..." -ForegroundColor White
-Push-Location $AurineDir
-
-if (-not (Test-Path ".venv\Scripts\python.exe")) {
-    Write-Host "  Creating virtual environment..." -ForegroundColor Green
-    python -m venv .venv 2>$null
-    .\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet 2>$null
-    .\.venv\Scripts\python.exe -m pip install -r requirements.txt --quiet
-    Write-Host "  Dependencies installed." -ForegroundColor Green
-} else {
-    Write-Host "  Virtual environment exists." -ForegroundColor Green
+# Step 2: Check Git
+Write-Host "  [2/5] Checking Git..." -ForegroundColor Yellow
+$git = $null
+try {
+    $gitVer = & git --version 2>&1
+    $git = "git"
+    Write-Host "        Found: $gitVer" -ForegroundColor Green
+} catch {
+    Write-Host "        Git not found!" -ForegroundColor Red
+    Write-Host "        Install from: https://git-scm.com/download/win" -ForegroundColor Yellow
+    exit 1
 }
 
-# Step 4: Configure
-Write-Host "[4/5] Configuring..." -ForegroundColor White
-if (-not (Test-Path ".env")) {
-    if (Test-Path ".env.example") {
-        Copy-Item ".env.example" ".env"
-    } else {
-        "AI_PROVIDER=aurine" | Out-File -FilePath ".env" -Encoding utf8
-    }
-    Write-Host "  Configuration created." -ForegroundColor Green
+# Step 3: Clone or update repo
+Write-Host "  [3/5] Getting Aurine AI..." -ForegroundColor Yellow
+if (Test-Path "$InstallDir\.git") {
+    Write-Host "        Updating existing installation..." -ForegroundColor Green
+    Set-Location $InstallDir
+    & git pull origin main 2>&1 | Out-Null
 } else {
-    Write-Host "  Configuration exists." -ForegroundColor Green
+    Write-Host "        Cloning repository..." -ForegroundColor Green
+    & git clone $Repo $InstallDir 2>&1 | Out-Null
+}
+Set-Location $InstallDir
+
+# Step 4: Setup venv and install dependencies
+Write-Host "  [4/5] Installing dependencies..." -ForegroundColor Yellow
+if (-not (Test-Path ".venv")) {
+    & $python -m venv .venv 2>&1 | Out-Null
+}
+$pip = ".venv\Scripts\pip.exe"
+& $pip install --upgrade pip -q 2>&1 | Out-Null
+if (Test-Path "requirements.txt") {
+    & $pip install -r requirements.txt -q 2>&1 | Out-Null
+}
+Write-Host "        Done" -ForegroundColor Green
+
+# Step 5: Install auracode command
+Write-Host "  [5/5] Installing 'auracode' command..." -ForegroundColor Yellow
+if (-not (Test-Path $AuracodeDir)) {
+    New-Item -ItemType Directory -Path $AuracodeDir -Force | Out-Null
 }
 
-# Step 5: Create launcher
-Write-Host "[5/5] Creating launcher..." -ForegroundColor White
-$desktop = [Environment]::GetFolderPath("Desktop")
-$launcher = @"
+# Create launcher bat
+$batContent = @"
 @echo off
 title AuraCode - AI Terminal Agent
-cd /d "$AurineDir"
-call .venv\Scripts\python.exe auracode.py
-pause
+set "AURINE_DIR=$InstallDir"
+cd /d "%AURINE_DIR%"
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" auracode.py
+) else (
+    echo [AuraCode] Setup incomplete. Run installer again.
+    pause
+)
 "@
-$launcher | Out-File -FilePath "$desktop\AuraCode.bat" -Encoding ascii
+Set-Content -Path "$AuracodeDir\auracode.bat" -Value $batContent
 
-Pop-Location
-
-Write-Host ""
-Write-Host "  ============================================" -ForegroundColor Green
-Write-Host "    INSTALL COMPLETE!" -ForegroundColor Green
-Write-Host "  ============================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "  Location: $AurineDir" -ForegroundColor White
-Write-Host "  Launcher: $desktop\AuraCode.bat" -ForegroundColor White
-Write-Host ""
-Write-Host "  START AURACODE:" -ForegroundColor Cyan
-Write-Host "    Double-click 'AuraCode' on Desktop" -ForegroundColor White
-Write-Host "    Or run: cd $AurineDir; python auracode.py" -ForegroundColor White
-Write-Host ""
-Write-Host "  Type your message and AuraCode will answer." -ForegroundColor Yellow
-Write-Host "  Type 'exit' to quit." -ForegroundColor Yellow
-Write-Host ""
-
-# Ask to start now
-$start = Read-Host "Start AuraCode terminal now? (Y/n)"
-if ($start -ne "n" -and $start -ne "N") {
-    Push-Location $AurineDir
-    & .\.venv\Scripts\python.exe auracode.py
-    Pop-Location
+# Create launcher ps1
+$ps1Content = @"
+`$ErrorActionPreference = "Stop"
+`$AurineDir = "$InstallDir"
+`$Python = Join-Path `$AurineDir ".venv\Scripts\python.exe"
+`$Script = Join-Path `$AurineDir "auracode.py"
+if (-not (Test-Path `$Python)) {
+    Write-Host "[AuraCode] Setup incomplete. Run installer again." -ForegroundColor Red
+    exit 1
 }
+Set-Location `$AurineDir
+& `$Python `$Script
+"@
+Set-Content -Path "$AuracodeDir\auracode.ps1" -Value $ps1Content
+
+# Create launcher cmd
+Copy-Item "$AuracodeDir\auracode.bat" "$AuracodeDir\auracode.cmd" -Force
+
+# Add to PATH
+$currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($currentPath -notlike "*$AuracodeDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$currentPath;$AuracodeDir", "User")
+    $env:Path += ";$AuracodeDir"
+}
+Write-Host "        Done" -ForegroundColor Green
+
+# Add PowerShell function
+$profilePath = $PROFILE.CurrentUserAllHosts
+$profileDir = Split-Path $profilePath
+if (-not (Test-Path $profileDir)) {
+    New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+}
+$existing = ""
+if (Test-Path $profilePath) { $existing = Get-Content $profilePath -Raw }
+if ($existing -notlike "*auracode*") {
+    Add-Content -Path $profilePath -Value ""
+    Add-Content -Path $profilePath -Value "# AuraCode"
+    Add-Content -Path $profilePath -Value "function auracode { & `"$AuracodeDir\auracode.ps1`" @args }"
+}
+
+# Add bash alias
+$bashrc = "$env:USERPROFILE\.bashrc"
+$aliasLine = "alias auracode='cmd.exe /c `"$AuracodeDir\auracode.bat`"'"
+if (Test-Path $bashrc) {
+    $bContent = Get-Content $bashrc -Raw
+    if ($bContent -notlike "*auracode*") {
+        Add-Content -Path $bashrc -Value ""
+        Add-Content -Path $bashrc -Value "# AuraCode"
+        Add-Content -Path $bashrc -Value $aliasLine
+    }
+} else {
+    Set-Content -Path $bashrc -Value "# AuraCode"
+    Add-Content -Path $bashrc -Value $aliasLine
+}
+
+Write-Host ""
+Write-Host "  ========================================" -ForegroundColor Green
+Write-Host "  AuraCode installed successfully!" -ForegroundColor Green
+Write-Host "  ========================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Installed to: $InstallDir" -ForegroundColor White
+Write-Host "  Command:      auracode" -ForegroundColor White
+Write-Host ""
+Write-Host "  To use:" -ForegroundColor Cyan
+Write-Host "    1. Close this terminal" -ForegroundColor White
+Write-Host "    2. Open a NEW terminal" -ForegroundColor White
+Write-Host "    3. Type: auracode" -ForegroundColor White
+Write-Host ""
