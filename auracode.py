@@ -610,9 +610,7 @@ def main() -> None:
     chat_id = f"cli_{get_device_id()}_{uuid4().hex[:8]}"
 
     print()
-    print(f"  {_bold(_white('AuraCode'))}  {_dim('terminal agent')}")
-    print(f"  {_dim(device_name)}  {_dim('workspace:')} {_dim(str(WORKSPACE))}")
-    print(f"  {_dim('/help')} commands  {_dim('/quit')} exit")
+    print(f"  {_bold(_white('AuraCode'))}  {_dim('v1.0')}  {_dim('/help' + ' for commands')}")
     print()
 
     while True:
@@ -624,7 +622,7 @@ def main() -> None:
         if not user_input:
             continue
         if user_input.lower() in {"exit", "quit", "/quit"}:
-            print(f"\n  {_dim('goodbye')}\n")
+            print(f"\n  {_dim('bye')}\n")
             break
         try:
             if handle_builtin(user_input):
