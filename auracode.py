@@ -9,8 +9,6 @@ from pathlib import Path
 from uuid import uuid4
 
 WORKSPACE = Path.cwd().resolve()
-DATA_DIR = Path.home() / ".aurine-data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 try:
     from app.llm import chat_completion
@@ -88,9 +86,9 @@ Rules:
 
 
 class C:
-    R = "\033[0m"; B = "\033[1m"; D = "\033[2m"; I = "\033[3m"; U = "\033[4m"
-    RED = "\033[31m"; GRN = "\033[32m"; YEL = "\033[33m"; BLU = "\033[34m"
-    MAG = "\033[35m"; CYN = "\033[36m"; WHT = "\033[97m"; GRY = "\033[90m"
+    R = "\033[0m"; B = "\033[1m"; D = "\033[2m"; I = "\033[3m"
+    RED = "\033[31m"; GRN = "\033[32m"; YEL = "\033[33m"
+    CYN = "\033[36m"; WHT = "\033[97m"; GRY = "\033[90m"; MAG = "\033[35m"
 
 
 def _w():
@@ -100,20 +98,16 @@ def _w():
 def _box(t, w=None):
     w = w or _w(); inn = w - 4
     if len(t) > inn: t = t[:inn-3] + "..."
-    pad = inn - len(t)
-    return f"  {C.GRY}\u2502{C.R} {t}{' '*pad} {C.GRY}\u2502{C.R}"
+    return f"  {C.GRY}\u2502{C.R} {t}{' '*(inn-len(t))} {C.GRY}\u2502{C.R}"
 
-def _sep(ch="\u2500", w=None):
-    w = w or _w()
-    return f"  {C.GRY}{ch*(w-4)}{C.R}"
+def _sep(ch="\u2500"):
+    return f"  {C.GRY}{ch*(_w()-4)}{C.R}"
 
-def _top(w=None):
-    w = w or _w()
-    return f"  {C.GRY}\u250C{''.join(['\u2500']*(w-4))}\u2510{C.R}"
+def _top():
+    return f"  {C.GRY}\u250C{''.join(['\u2500']*(_w()-4))}\u2510{C.R}"
 
-def _bot(w=None):
-    w = w or _w()
-    return f"  {C.GRY}\u2514{''.join(['\u2500']*(w-4))}\u2518{C.R}"
+def _bot():
+    return f"  {C.GRY}\u2514{''.join(['\u2500']*(_w()-4))}\u2518{C.R}"
 
 def _spinner():
     fr = ["\u25F7","\u25F4","\u25F5","\u25F6"]; i = 0
@@ -128,7 +122,6 @@ def _spin_start():
 
 def _spin_stop():
     _spinner.running = False; time.sleep(0.1)
-
 
 IGNORE_DIRS = {".git",".venv","__pycache__","node_modules",".mypy_cache",".pytest_cache"}
 
@@ -189,95 +182,6 @@ def _exec(actions):
     return "\n".join(res)
 
 
-def _setup_wizard():
-    print()
-    print(_top())
-    print(_box(f"{C.B}{C.CYN}AuraCode{C.R}  {C.D}First Run Setup{C.R}"))
-    print(_sep())
-    print(_box(f"  {C.D}Choose your AI provider:{C.R}"))
-    print(_box(f"  {C.CYN}1{C.R} {C.D}OpenAI (GPT-4o) - recommended{C.R}"))
-    print(_box(f"  {C.CYN}2{C.R} {C.D}Anthropic (Claude){C.R}"))
-    print(_box(f"  {C.CYN}3{C.R} {C.D}Google Gemini{C.R}"))
-    print(_box(f"  {C.CYN}4{C.R} {C.D}Groq (free, fast){C.R}"))
-    print(_box(f"  {C.CYN}5{C.R} {C.D}DeepSeek{C.R}"))
-    print(_box(f"  {C.CYN}6{C.R} {C.D}OpenRouter{C.R}"))
-    print(_bot())
-    print()
-
-    choice = input(f"  {C.GRN}\u25B6{C.R} Choose [1-6]: ").strip()
-
-    providers = {
-        "1": ("openai", "OPENAI_API_KEY", "OPENAI_CHAT_MODEL", "gpt-4o-mini"),
-        "2": ("anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_CHAT_MODEL", "claude-sonnet-4-20250514"),
-        "3": ("google", "GOOGLE_API_KEY", "GOOGLE_CHAT_MODEL", "gemini-2.0-flash"),
-        "4": ("groq", "GROQ_API_KEY", "GROQ_CHAT_MODEL", "llama-3.3-70b-versatile"),
-        "5": ("deepseek", "DEEPSEEK_API_KEY", "DEEPSEEK_CHAT_MODEL", "deepseek-chat"),
-        "6": ("openrouter", "OPENROUTER_API_KEY", "OPENROUTER_CHAT_MODEL", "anthropic/claude-sonnet-4"),
-    }
-
-    if choice not in providers:
-        print(f"  {C.RED}Invalid choice.{C.R}")
-        return False
-
-    prov, key_env, model_env, default_model = providers[choice]
-
-    print()
-    print(f"  {C.D}Get your API key from:{C.R}")
-    urls = {
-        "1": "https://platform.openai.com/api-keys",
-        "2": "https://console.anthropic.com/",
-        "3": "https://aistudio.google.com/app/apikey",
-        "4": "https://console.groq.com/keys",
-        "5": "https://platform.deepseek.com/",
-        "6": "https://openrouter.ai/keys",
-    }
-    print(f"  {C.CYN}{urls[choice]}{C.R}")
-    print()
-
-    api_key = input(f"  {C.GRN}\u25B6{C.R} Paste your API key: ").strip()
-    if not api_key:
-        print(f"  {C.RED}No key entered.{C.R}")
-        return False
-
-    env_path = WORKSPACE / ".env"
-    lines = []
-    if env_path.exists():
-        lines = env_path.read_text().splitlines()
-
-    new_lines = []
-    found_provider = False
-    found_key = False
-    found_model = False
-    for line in lines:
-        if line.startswith("AI_PROVIDER="):
-            new_lines.append(f"AI_PROVIDER={prov}")
-            found_provider = True
-        elif line.startswith(f"{key_env}="):
-            new_lines.append(f"{key_env}={api_key}")
-            found_key = True
-        elif line.startswith(f"{model_env}="):
-            new_lines.append(f"{model_env}={default_model}")
-            found_model = True
-        else:
-            new_lines.append(line)
-
-    if not found_provider: new_lines.append(f"AI_PROVIDER={prov}")
-    if not found_key: new_lines.append(f"{key_env}={api_key}")
-    if not found_model: new_lines.append(f"{model_env}={default_model}")
-
-    env_path.write_text("\n".join(new_lines) + "\n")
-
-    print()
-    print(f"  {C.GRN}\u2713{C.R} Configured: {C.B}{prov}{C.R}")
-    print(f"  {C.D}Model: {default_model}{C.R}")
-    print()
-
-    settings_file = DATA_DIR / "settings.json"
-    settings_file.write_text(json.dumps({"provider": prov, "key_env": key_env, "model": default_model}, indent=2))
-
-    return True
-
-
 def _handle_slash(inp):
     if not inp.startswith("/"): return False
     cmd, _, val = inp[1:].partition(" ")
@@ -292,21 +196,16 @@ def _handle_slash(inp):
         print(_box(f"  {C.CYN}/help{C.R}                {C.D}show this help{C.R}"))
         print(_box(f"  {C.CYN}/agents{C.R}              {C.D}list available agents{C.R}"))
         print(_box(f"  {C.CYN}/agent{C.R}  <name>       {C.D}switch agent{C.R}"))
-        print(_box(f"  {C.CYN}/plugins{C.R}             {C.D}list plugins with status{C.R}"))
-        print(_box(f"  {C.CYN}/plugin{C.R}  <name>       {C.D}check plugin status{C.R}"))
-        print(_box(f"  {C.CYN}/skills{C.R}              {C.D}list available skills{C.R}"))
-        print(_box(f"  {C.CYN}/skill{C.R}   <name>       {C.D}activate a skill{C.R}"))
+        print(_box(f"  {C.CYN}/plugins{C.R}             {C.D}list plugins{C.R}"))
+        print(_box(f"  {C.CYN}/skills{C.R}              {C.D}list skills{C.R}"))
         print(_sep())
-        print(_box(f"  {C.CYN}/files{C.R}  [path]       {C.D}list workspace files{C.R}"))
-        print(_box(f"  {C.CYN}/read{C.R}   <path>       {C.D}read a file{C.R}"))
-        print(_box(f"  {C.CYN}/run{C.R}    <command>    {C.D}run shell command{C.R}"))
-        print(_box(f"  {C.CYN}/tree{C.R}                {C.D}show directory tree{C.R}"))
+        print(_box(f"  {C.CYN}/files{C.R}  [path]       {C.D}list files{C.R}"))
+        print(_box(f"  {C.CYN}/read{C.R}   <path>       {C.D}read file{C.R}"))
+        print(_box(f"  {C.CYN}/run{C.R}    <command>    {C.D}run command{C.R}"))
         print(_sep())
-        print(_box(f"  {C.CYN}/sessions{C.R}            {C.D}view past chats{C.R}"))
-        print(_box(f"  {C.CYN}/device{C.R}              {C.D}show device info{C.R}"))
-        print(_box(f"  {C.CYN}/model{C.R}               {C.D}show current AI model{C.R}"))
-        print(_box(f"  {C.CYN}/setup{C.R}               {C.D}re-run API key setup{C.R}"))
-        print(_box(f"  {C.CYN}/theme{C.R}               {C.D}toggle light/dark{C.R}"))
+        print(_box(f"  {C.CYN}/sessions{C.R}            {C.D}past chats{C.R}"))
+        print(_box(f"  {C.CYN}/device{C.R}              {C.D}device info{C.R}"))
+        print(_box(f"  {C.CYN}/model{C.R}               {C.D}current model{C.R}"))
         print(_box(f"  {C.CYN}/clear{C.R}               {C.D}clear screen{C.R}"))
         print(_box(f"  {C.CYN}/quit{C.R}                {C.D}exit{C.R}"))
         print(_bot())
@@ -335,9 +234,9 @@ def _handle_slash(inp):
             found = [a for a in AGENTS if a["id"] == val.lower()]
             if found:
                 a = found[0]
-                print(f"\n  {C.GRN}\u2713{C.R} Agent: {C.B}{a['name']}{C.R}  {C.D}{a['desc']}{C.R}  {C.D}model: {a['model']}{C.R}\n")
+                print(f"\n  {C.GRN}\u2713{C.R} Agent: {C.B}{a['name']}{C.R}  {C.D}{a['desc']}{C.R}\n")
             else:
-                print(f"  {C.RED}\u2717{C.R} Agent '{val}' not found. /agents to list.")
+                print(f"  {C.RED}\u2717{C.R} Not found. /agents to list.")
         return True
 
     if cmd == "plugins":
@@ -347,23 +246,9 @@ def _handle_slash(inp):
         print(_sep())
         for p in PLUGINS:
             acts = ", ".join(p["actions"][:4])
-            if len(p["actions"]) > 4: acts += f" +{len(p['actions'])-4}"
             print(_box(f"  {C.CYN}{p['id'].ljust(12)}{C.R} {C.GRN}\u2713{C.R} {C.D}{acts}{C.R}"))
         print(_bot())
         print()
-        return True
-
-    if cmd == "plugin":
-        if not val:
-            print(f"  {C.D}Usage: /plugin <name>{C.R}")
-        else:
-            found = [p for p in PLUGINS if p["id"] == val.lower()]
-            if found:
-                p = found[0]
-                print(f"\n  {C.B}{p['name']}{C.R}")
-                print(f"  {C.D}Actions: {', '.join(p['actions'])}{C.R}\n")
-            else:
-                print(f"  {C.RED}Plugin '{val}' not found.{C.R}")
         return True
 
     if cmd == "skills":
@@ -375,20 +260,6 @@ def _handle_slash(inp):
             print(_box(f"  {C.CYN}{s['id'].ljust(16)}{C.R} {C.D}{s['desc']}{C.R}"))
         print(_bot())
         print()
-        return True
-
-    if cmd == "skill":
-        if not val:
-            print(f"  {C.D}Usage: /skill <name>{C.R}")
-        else:
-            found = [s for s in SKILLS if s["id"] == val.lower()]
-            if found:
-                s = found[0]
-                print(f"\n  {C.GRN}\u2713{C.R} Skill: {C.B}{s['name']}{C.R}")
-                print(f"  {C.D}{s['desc']}{C.R}")
-                print(f"  {C.D}Ask me to use this skill in your next message.{C.R}\n")
-            else:
-                print(f"  {C.RED}Skill '{val}' not found. /skills to list.{C.R}")
         return True
 
     if cmd in {"files","ls"}:
@@ -425,20 +296,7 @@ def _handle_slash(inp):
             result = _run_cmd(val)
             for line in result.split("\n")[:40]:
                 print(f"    {line}")
-            if len(result.split("\n")) > 40:
-                print(f"    {C.D}... more{C.R}")
             print()
-        return True
-
-    if cmd == "tree":
-        print()
-        print(_top())
-        print(_box(f"{C.B}{C.WHT}Directory Tree{C.R}"))
-        print(_sep())
-        for line in _list_files(".").split("\n"):
-            print(_box(f"  {line}"))
-        print(_bot())
-        print()
         return True
 
     if cmd == "sessions":
@@ -447,16 +305,14 @@ def _handle_slash(inp):
             if chats:
                 print()
                 print(_top())
-                print(_box(f"{C.B}{C.WHT}Past Sessions{C.R}  {C.D}({len(chats)} total){C.R}"))
+                print(_box(f"{C.B}{C.WHT}Sessions{C.R}  {C.D}({len(chats)}){C.R}"))
                 print(_sep())
                 for c in chats[:10]:
                     print(_box(f"  {C.D}{c['chat_id'][:16]}{C.R}  {c['last_message'][:40]}"))
                 print(_bot())
                 print()
             else:
-                print(f"  {C.D}No past sessions.{C.R}")
-        else:
-            print(f"  {C.D}AI not available.{C.R}")
+                print(f"  {C.D}No sessions.{C.R}")
         return True
 
     if cmd == "device":
@@ -466,7 +322,7 @@ def _handle_slash(inp):
             info["device_id"] = get_device_id()[:16]
         print()
         print(_top())
-        print(_box(f"{C.B}{C.WHT}Device Info{C.R}"))
+        print(_box(f"{C.B}{C.WHT}Device{C.R}"))
         print(_sep())
         for k, v in info.items():
             print(_box(f"  {C.CYN}{k.ljust(12)}{C.R} {v}"))
@@ -475,30 +331,21 @@ def _handle_slash(inp):
         return True
 
     if cmd == "model":
-        sf = DATA_DIR / "settings.json"
-        if sf.exists():
-            s = json.loads(sf.read_text())
-            print(f"\n  {C.D}Provider:{C.R} {C.B}{s.get('provider','?')}{C.R}")
-            print(f"  {C.D}Model:{C.R} {s.get('model','?')}\n")
-        else:
-            print(f"  {C.D}No model configured. Run /setup{C.R}")
+        from dotenv import load_dotenv
+        load_dotenv()
+        prov = os.getenv("AI_PROVIDER", "openai")
+        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+        print(f"\n  {C.D}Provider:{C.R} {C.B}{prov}{C.R}")
+        print(f"  {C.D}Model:{C.R} {model}\n")
         return True
 
-    if cmd == "setup":
-        _setup_wizard()
-        return True
-
-    if cmd == "theme":
-        print(f"  {C.D}Theme toggle coming soon.{C.R}")
-        return True
-
-    print(f"  {C.D}Unknown command. Type /help{C.R}")
+    print(f"  {C.D}Unknown command. /help{C.R}")
     return True
 
 
 def _ask(inp, tool_results="", history=None):
     if not _HAS_AI:
-        return {"message": "AI not configured. Run /setup to add your API key.", "actions": []}
+        return {"message": "AI module not available.", "actions": []}
     mem = build_memory_context()
     sys = SYSTEM_PROMPT
     if mem: sys += f"\n\nUSER MEMORY:\n{mem}"
@@ -510,11 +357,11 @@ def _ask(inp, tool_results="", history=None):
         msgs.append({"role": "user", "content": f"Tool results:\n{tool_results}\n\nUser: {inp}"})
     else:
         msgs.append({"role": "user", "content": inp})
+    content = chat_completion(msgs, temperature=0.1, json_mode=True)
     try:
-        content = chat_completion(msgs, temperature=0.1, json_mode=True)
         return json.loads(content)
-    except Exception as e:
-        return {"message": f"Error: {e}", "actions": []}
+    except json.JSONDecodeError:
+        return {"message": "Could not parse response.", "actions": []}
 
 
 def _run_turn(inp, chat_id):
@@ -528,40 +375,31 @@ def _run_turn(inp, chat_id):
     tool_results = ""
     for _ in range(5):
         _spin_start()
-        try:
-            resp = _ask(inp, tool_results, history)
-        finally:
-            _spin_stop()
+        try: resp = _ask(inp, tool_results, history)
+        finally: _spin_stop()
 
         msg = resp.get("message", "")
         actions = resp.get("actions", [])
-
         if msg:
             print(f"\n  {msg}\n")
             if _HAS_AI:
                 store_chat_message(chat_id, "assistant", msg, "auracode")
-
-        if not actions:
-            return
+        if not actions: return
 
         for a in actions:
             tool = a.get("tool","")
             det = a.get("path", a.get("command",""))
             if tool == "write_file": det = a.get("path","")
-            if det and len(str(det)) > 60: det = str(det)[:57] + "..."
+            if det and len(str(det)) > 60: det = str(det)[:57]+"..."
             print(f"  {C.MAG}\u25B6{C.R} {C.CYN}{tool}{C.R} {C.D}{det}{C.R}")
 
         _spin_start()
-        try:
-            tool_results = _exec(actions)
-        finally:
-            _spin_stop()
+        try: tool_results = _exec(actions)
+        finally: _spin_stop()
 
         if tool_results.strip():
-            lines = tool_results.strip().split("\n")[:10]
-            print("\n".join(lines))
-            if len(tool_results.strip().split("\n")) > 10:
-                print(f"  {C.D}... more{C.R}")
+            for line in tool_results.strip().split("\n")[:10]:
+                print(f"  {line}")
             print()
 
 
@@ -577,14 +415,6 @@ def _print_header():
 
 
 def main():
-    env = WORKSPACE / ".env"
-    sf = DATA_DIR / "settings.json"
-
-    if not sf.exists() or not env.exists():
-        if not env.exists():
-            env.write_text("AI_PROVIDER=openai\nOPENAI_API_KEY=\nOPENAI_CHAT_MODEL=gpt-4o-mini\n")
-        _setup_wizard()
-
     chat_id = f"cli_{uuid4().hex[:8]}"
     if _HAS_AI:
         chat_id = f"cli_{get_device_id()}_{uuid4().hex[:8]}"
