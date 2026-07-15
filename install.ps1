@@ -43,7 +43,14 @@ Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
 $srcDir = (Get-ChildItem $extractDir -Directory | Select-Object -First 1).FullName
 
 # Create clean install dir with ONLY auracode files
-if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
+# Kill any running python to unlock files
+Get-Process python,pythonw -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+
+if (Test-Path $InstallDir) {
+    Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path $InstallDir) { cmd /c "rd /s /q `"$InstallDir`"" 2>$null }
+}
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 New-Item -ItemType Directory -Path "$InstallDir\app" -Force | Out-Null
 
@@ -72,15 +79,43 @@ Write-Host "  Downloaded OK" -ForegroundColor Green
 Write-Host "  [3/3] Setting up..." -ForegroundColor Yellow
 
 # Create venv
-if (-not (Test-Path "$InstallDir\.venv\pyvenv.cfg")) {
-    if (Test-Path "$InstallDir\.venv") { Remove-Item "$InstallDir\.venv" -Recurse -Force -ErrorAction SilentlyContinue }
-    & $py -m venv "$InstallDir\.venv"
+$venvDir = "$InstallDir\.venv"
+if (-not (Test-Path "$venvDir\pyvenv.cfg")) {
+    # Kill python again in case something started
+    Get-Process python,pythonw -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # Force remove old broken venv
+    if (Test-Path $venvDir) {
+        Remove-Item $venvDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path $venvDir) { cmd /c "rd /s /q `"$venvDir`"" 2>$null }
+    }
+
+    # Create fresh venv in temp first, then move
+    $tmpVenv = "$env:TEMP\auracode_venv"
+    if (Test-Path $tmpVenv) { Remove-Item $tmpVenv -Recurse -Force -ErrorAction SilentlyContinue }
+    & $py -m venv $tmpVenv
+
+    if (Test-Path "$tmpVenv\pyvenv.cfg") {
+        Move-Item $tmpVenv $venvDir -Force
+    } else {
+        # Fallback: create directly
+        & $py -m venv $venvDir
+    }
 }
 
 # Install ONLY the 4 packages auracode needs
 $venvPy = "$InstallDir\.venv\Scripts\python.exe"
-& $venvPy -m pip install --upgrade pip -q 2>$null
-& $venvPy -m pip install openai httpx pydantic python-dotenv -q 2>$null
+if (Test-Path $venvPy) {
+    & $venvPy -m pip install openai httpx pydantic python-dotenv -q
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [!] pip install had issues, retrying..." -ForegroundColor Yellow
+        & $venvPy -m pip install openai httpx pydantic python-dotenv
+    }
+} else {
+    Write-Host "  [x] venv python not found at $venvPy" -ForegroundColor Red
+    Write-Host "  Try running: python -m venv `"$InstallDir\.venv`"" -ForegroundColor Yellow
+}
 
 Write-Host "  Dependencies OK" -ForegroundColor Green
 
