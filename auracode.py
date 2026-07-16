@@ -96,9 +96,9 @@ CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
 # AGENTS - OpenCode style sub-agents
 # ============================================================================
 AGENTS = [
-    {"id": "general", "name": "Aurine", "icon": "🧠", "desc": "Full-stack AI assistant", "color": "cyan",
+    {"id": "general", "name": "Aurine", "icon": "AI", "desc": "Full-stack AI assistant", "color": "cyan",
      "system": "You are AuraCode, an elite AI coding assistant. Help with coding, files, commands, and all software tasks. Be concise and accurate."},
-    {"id": "coder", "name": "Coder", "icon": "💻", "desc": "Elite coding agent", "color": "green",
+    {"id": "coder", "name": "Coder", "icon": "**", "desc": "Elite coding agent", "color": "green",
      "system": "You are an expert programmer. Write complete, production-ready code. Always include imports and error handling."},
     {"id": "researcher", "name": "Researcher", "icon": "🔍", "desc": "Web search & analysis", "color": "blue",
      "system": "You are a research agent. Search the web, analyze information, provide well-sourced answers."},
