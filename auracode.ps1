@@ -43,7 +43,13 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
     Write-Host "  Setting up Python environment..." -ForegroundColor DarkGray
     python -m venv .venv 2>$null
 }
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -q 2>$null
+if (Test-Path ".venv\Scripts\python.exe") {
+    & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt -q 2>$null
+} else {
+    Write-Host "  [X] Python 3.10+ required. Install from https://python.org" -ForegroundColor Red
+    pause
+    exit 1
+}
 
 # === ENSURE DEVICE DATA DIR ===
 $dataDir = "$env:USERPROFILE\.aurine-data"

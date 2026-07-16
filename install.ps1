@@ -238,18 +238,24 @@ Write-Host "  [5/5] Creating command..." -ForegroundColor Yellow
 
 if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
 
-@"
+$batContent = @"
 @echo off
 title AuraCode v2.0
 cd /d "$InstallDir"
 if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
-"$venvPy" auracode.py %*
+if not exist ".venv\Scripts\python.exe" (
+    echo   Setting up Python environment...
+    "$py" -m venv .venv 2>nul
+)
+".venv\Scripts\python.exe" -m pip install -r requirements.txt -q 2>nul
+".venv\Scripts\python.exe" auracode.py %*
 if errorlevel 1 (
     echo.
     echo  AuraCode error. Make sure Python 3.10+ is installed.
     pause
 )
-"@ | Set-Content "$BinDir\auracode.bat" -NoNewline
+"@
+$batContent | Set-Content "$BinDir\auracode.bat" -NoNewline -Encoding ASCII
 Copy-Item "$BinDir\auracode.bat" "$BinDir\auracode.cmd" -Force
 
 # Add to PATH
