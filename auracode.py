@@ -1286,6 +1286,87 @@ def _run_turn(inp, chat_id):
 
 
 # ============================================================================
+# AUTO-SETUP WIZARD
+# ============================================================================
+
+def _check_ai_ready():
+    """Check if any AI provider has a working API key."""
+    from dotenv import load_dotenv
+    load_dotenv()
+    for key in ["GOOGLE_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY",
+                "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "SAMBANOVA_API_KEY",
+                "CEREBRAS_API_KEY", "NVIDIA_API_KEY"]:
+        val = os.getenv(key, "").strip()
+        if val and len(val) > 5 and not val.startswith("AIzaSyDummy"):
+            return True
+    # Check if Ollama is running
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:11434/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=2) as r:
+            if r.status == 200:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _auto_setup_wizard():
+    """Interactive setup wizard - guides user to connect an AI provider."""
+    console.print(Panel("[bold cyan]Quick AI Setup[/]\n[dim]Pick a free provider, get a key (30 sec), paste it here.[/]", border_style="cyan"))
+
+    free_providers = [
+        {"name": "Google Gemini", "key_env": "GOOGLE_API_KEY", "url": "https://aistudio.google.com/app/apikey",
+         "model_env": "GOOGLE_CHAT_MODEL", "model": "gemini-2.0-flash", "icon": "🔷", "steps": "1. Click link\n2. Sign in with Google\n3. Click 'Create API Key'\n4. Copy the key"},
+        {"name": "Groq (Fastest)", "key_env": "GROQ_API_KEY", "url": "https://console.groq.com/keys",
+         "model_env": "GROQ_CHAT_MODEL", "model": "llama-3.3-70b-versatile", "icon": "⚡", "steps": "1. Click link\n2. Sign up free\n3. Create API key\n4. Copy the key"},
+        {"name": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "url": "https://platform.deepseek.com/",
+         "model_env": "DEEPSEEK_CHAT_MODEL", "model": "deepseek-chat", "icon": "🔵", "steps": "1. Click link\n2. Sign up\n3. Go to API Keys\n4. Create & copy key"},
+        {"name": "OpenRouter (Many models)", "key_env": "OPENROUTER_API_KEY", "url": "https://openrouter.ai/keys",
+         "model_env": "OPENROUTER_CHAT_MODEL", "model": "meta-llama/llama-3.1-405b-instruct", "icon": "🌐", "steps": "1. Click link\n2. Sign up\n3. Create key\n4. Copy key"},
+    ]
+
+    options = []
+    for p in free_providers:
+        options.append({
+            "display": f"{p['icon']}  {p['name']}  [green](free)[/]",
+            "value": p,
+        })
+
+    console.print()
+    result = _fuzzy_select("Choose a FREE AI provider:", options, key_func=lambda o: o.get("name", ""))
+    if not result:
+        console.print("[dim]Skipped. Type /connect later to set up.[/]\n")
+        return
+
+    provider = result
+    console.print()
+    console.print(f"[bold cyan]{provider['icon']} {provider['name']}[/]")
+    console.print(Panel(provider["steps"], border_style="cyan", title="[dim]Steps[/]"))
+    console.print(f"[dim]Link: {provider['url']}[/]")
+    console.print()
+
+    try:
+        api_key = input("  Paste your API key here: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[dim]Skipped. Type /connect later.[/]\n")
+        return
+
+    if not api_key or len(api_key) < 10:
+        console.print("[yellow]Key too short. Type /connect later.[/]\n")
+        return
+
+    # Save to .env
+    _set_env_var(provider["key_env"], api_key)
+    _set_env_var("AI_PROVIDER", provider["key_env"].replace("_API_KEY", "").lower())
+    _set_env_var(provider["model_env"], provider["model"])
+
+    console.print(f"\n[green]✓ Connected to {provider['name']}![/]")
+    console.print(f"[green]✓ Model: {provider['model']}[/]")
+    console.print("[dim]Starting chat...[/]\n")
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -1323,6 +1404,12 @@ def main():
         _state["session_name"] = last.get("name", last["id"][:8])
 
     _print_header()
+
+    # Auto-setup: check if any AI provider is configured
+    if not _check_ai_ready():
+        console.print("[yellow]No AI provider configured yet![/]")
+        console.print("[dim]Let's set one up (takes 30 seconds)[/]\n")
+        _auto_setup_wizard()
 
     while True:
         try:

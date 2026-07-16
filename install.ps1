@@ -1,5 +1,5 @@
-# AuraCode v2.0 - One-Line Installer
-# Run: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
+# AuraCode v2.0 - Universal Installer
+# Run on ANY Windows device: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
 
 $InstallDir = "$env:USERPROFILE\.aurine"
 $BinDir = "$InstallDir\bin"
@@ -8,12 +8,14 @@ $RepoUrl = "https://github.com/tushargohil26/aurineAI"
 Write-Host ""
 Write-Host "  ============================================" -ForegroundColor Cyan
 Write-Host "    AuraCode v2.0 - AI Terminal Agent" -ForegroundColor Cyan
-Write-Host "    OpenCode-style | Free Cloud AI | Auto-update" -ForegroundColor DarkGray
+Write-Host "    Works on ANY device | No Ollama needed" -ForegroundColor DarkGray
 Write-Host "  ============================================" -ForegroundColor Cyan
 Write-Host ""
 
-# STEP 1: Python
-Write-Host "  [1/5] Checking Python..." -ForegroundColor Yellow
+# ====================================================================
+# STEP 1: Find Python (never crash)
+# ====================================================================
+Write-Host "  [1/5] Python..." -ForegroundColor Yellow
 $py = $null
 foreach ($c in @("python", "python3", "py")) {
     try {
@@ -25,67 +27,89 @@ foreach ($c in @("python", "python3", "py")) {
     } catch {}
 }
 if (-not $py) {
-    Write-Host "  Installing Python via winget..." -ForegroundColor Yellow
+    Write-Host "  Python not found. Installing..." -ForegroundColor Yellow
     try {
-        Start-Process winget -ArgumentList "install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements" -Wait -NoNewWindow
+        Start-Process winget -ArgumentList "install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements" -Wait -NoNewWindow -ErrorAction SilentlyContinue
         $env:Path = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts;" + $env:Path
-        $py = "python"
-    } catch {
-        Write-Host "  [X] Install Python 3.10+ from https://python.org then re-run" -ForegroundColor Red
-        exit 1
-    }
+        foreach ($c in @("python", "python3")) {
+            try { $v = & $c --version 2>&1 | Out-String; if ($v -match "Python 3") { $py = $c; break } } catch {}
+        }
+    } catch {}
 }
-Write-Host "  [OK] Python" -ForegroundColor Green
+if (-not $py) {
+    Write-Host "  [X] Python 3.10+ required. Install from python.org" -ForegroundColor Red
+    Write-Host "  Then re-run this command." -ForegroundColor Yellow
+    pause
+    exit 1
+}
+Write-Host "  [OK] $py" -ForegroundColor Green
 
-# STEP 2: Download
-Write-Host "  [2/5] Downloading AuraCode..." -ForegroundColor Yellow
-$zipUrl = "$RepoUrl/archive/refs/heads/main.zip"
+# ====================================================================
+# STEP 2: Download AuraCode
+# ====================================================================
+Write-Host "  [2/5] Downloading..." -ForegroundColor Yellow
 $zipFile = "$env:TEMP\auracode_dl.zip"
 $extractDir = "$env:TEMP\auracode_ext"
+$srcDir = ""
 
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile -UseBasicParsing -TimeoutSec 120
+    if (Test-Path $zipFile) { Remove-Item $zipFile -Force }
+    if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+    Invoke-WebRequest -Uri "$RepoUrl/archive/refs/heads/main.zip" -OutFile $zipFile -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+    Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
+    $srcDir = (Get-ChildItem $extractDir -Directory | Select-Object -First 1).FullName
+    Write-Host "  [OK] Downloaded" -ForegroundColor Green
 } catch {
-    Write-Host "  [X] Download failed" -ForegroundColor Red
+    Write-Host "  [X] Download failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "  Check internet connection and retry." -ForegroundColor Yellow
+    pause
     exit 1
 }
 
-if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
-Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
-$srcDir = (Get-ChildItem $extractDir -Directory | Select-Object -First 1).FullName
+# ====================================================================
+# STEP 3: Install files (preserve existing .env!)
+# ====================================================================
+Write-Host "  [3/5] Installing files..." -ForegroundColor Yellow
 
-Get-Process python, pythonw -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Stop any running instance
+Get-Process python, pythonw -ErrorAction SilentlyContinue | Where-Object {
+    try { $_.CommandLine -match "auracode" } catch { $false }
+} | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 
-if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
-New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-New-Item -ItemType Directory -Path "$InstallDir\app" -Force | Out-Null
-New-Item -ItemType Directory -Path "$InstallDir\.auracode\sessions" -Force | Out-Null
-
-Copy-Item "$srcDir\auracode.py" "$InstallDir\auracode.py" -Force
-$pyFiles = Get-ChildItem "$srcDir\app\*.py" -ErrorAction SilentlyContinue
-foreach ($f in $pyFiles) { Copy-Item $f.FullName "$InstallDir\app\$($f.Name)" -Force }
-foreach ($f in @(".env.example", "requirements.txt")) {
-    $s = Join-Path $srcDir $f
-    if (Test-Path $s) { Copy-Item $s (Join-Path $InstallDir $f) -Force }
+# Save existing .env before overwriting
+$savedEnv = $null
+if (Test-Path "$InstallDir\.env") {
+    $savedEnv = Get-Content "$InstallDir\.env" -Raw -ErrorAction SilentlyContinue
 }
 
-# Only create .env if it doesn't exist (never overwrite existing keys)
-if (-not (Test-Path "$InstallDir\.env")) {
-    # Check if source repo has a .env with real keys to copy
+# Create directories
+foreach ($d in @($InstallDir, "$InstallDir\app", "$InstallDir\.auracode\sessions")) {
+    if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+}
+
+# Copy auracode.py
+Copy-Item "$srcDir\auracode.py" "$InstallDir\auracode.py" -Force
+
+# Copy app/ module
+New-Item -ItemType Directory -Path "$InstallDir\app" -Force | Out-Null
+$pyFiles = Get-ChildItem "$srcDir\app\*.py" -ErrorAction SilentlyContinue
+foreach ($f in $pyFiles) { Copy-Item $f.FullName "$InstallDir\app\$($f.Name)" -Force }
+
+# Copy requirements.txt
+if (Test-Path "$srcDir\requirements.txt") { Copy-Item "$srcDir\requirements.txt" "$InstallDir\requirements.txt" -Force }
+
+# Handle .env: restore saved or create new
+if ($savedEnv) {
+    $savedEnv | Set-Content "$InstallDir\.env" -NoNewline
+    Write-Host "  [OK] Restored existing .env (kept your API keys)" -ForegroundColor Green
+} elseif (-not (Test-Path "$InstallDir\.env")) {
+    # Try to copy from source repo
     $srcEnv = Join-Path $srcDir ".env"
-    $hasRealKeys = $false
     if (Test-Path $srcEnv) {
-        $envContent = Get-Content $srcEnv -Raw -ErrorAction SilentlyContinue
-        if ($envContent -and ($envContent -match "GOOGLE_API_KEY=.{10,}" -or $envContent -match "OPENAI_API_KEY=.{10,}" -or $envContent -match "GROQ_API_KEY=.{10,}")) {
-            Copy-Item $srcEnv "$InstallDir\.env" -Force
-            $hasRealKeys = $true
-            Write-Host "  [OK] Copied existing API keys" -ForegroundColor Green
-        }
-    }
-    if (-not $hasRealKeys) {
-        # Default to aurine provider (auto-falls back to available cloud providers)
+        Copy-Item $srcEnv "$InstallDir\.env" -Force
+    } else {
         @"
 AI_PROVIDER=aurine
 GOOGLE_API_KEY=
@@ -102,58 +126,60 @@ OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 VECTOR_DB=$InstallDir\vector_store.sqlite3
 DATA_DIR=$InstallDir\data
 "@ | Set-Content "$InstallDir\.env" -NoNewline
-        Write-Host "  [!] No API keys found. Use /connect in AuraCode to set one up." -ForegroundColor Yellow
     }
+    Write-Host "  [OK] Created .env" -ForegroundColor Green
 }
 
+# Cleanup
 Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
 Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host "  [OK] Downloaded" -ForegroundColor Green
 
-# STEP 3: Venv + dependencies (uses cmd /c to avoid PowerShell stderr issues)
-Write-Host "  [3/5] Installing Python packages..." -ForegroundColor Yellow
+# ====================================================================
+# STEP 4: Install Python packages (bulletproof)
+# ====================================================================
+Write-Host "  [4/5] Installing packages..." -ForegroundColor Yellow
 
 $venvDir = "$InstallDir\.venv"
 $venvPy = "$venvDir\Scripts\python.exe"
 
+# Create venv if missing
 if (-not (Test-Path "$venvDir\pyvenv.cfg")) {
     Get-Process python, pythonw -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 300
     if (Test-Path $venvDir) { Remove-Item $venvDir -Recurse -Force -ErrorAction SilentlyContinue }
-    cmd /c "`"$py`" -m venv `"$venvDir`"" 2>$null
+    cmd /c "`"$py`" -m venv `"$venvDir`"" 2>nul
 }
 
-# Upgrade pip
-cmd /c "`"$venvPy`" -m pip install --upgrade pip 2>nul" 2>$null
+# Upgrade pip silently
+cmd /c "`"$venvPy`" -m pip install --upgrade pip 2>nul" 2>nul | Out-Null
 
-# Install packages one by one using cmd /c (avoids PowerShell stderr errors)
-$packages = @("rich", "questionary", "openai", "httpx", "pydantic", "python-dotenv", "pygments", "tiktoken")
-$okCount = 0
-$failCount = 0
+# Install packages one by one (NEVER crash)
+$packages = @("rich", "questionary", "openai", "httpx", "pydantic", "python-dotenv", "pygments")
+$ok = 0
+$fail = 0
 foreach ($pkg in $packages) {
     cmd /c "`"$venvPy`" -m pip install $pkg 2>&1" | Out-Null
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -eq 0) {
+    if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] $pkg" -ForegroundColor Green
-        $okCount++
+        $ok++
     } else {
-        Write-Host "  [!] $pkg - retrying..." -ForegroundColor Yellow
+        # Retry once
         cmd /c "`"$venvPy`" -m pip install $pkg --force-reinstall 2>&1" | Out-Null
-        $check = cmd /c "`"$venvPy`" -c `"import $($pkg.Replace('-','_'))`" 2>&1"
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [OK] $pkg (retry)" -ForegroundColor Green
-            $okCount++
+            Write-Host "  [OK] $pkg" -ForegroundColor Green
+            $ok++
         } else {
-            Write-Host "  [X] $pkg FAILED" -ForegroundColor Red
-            $failCount++
+            Write-Host "  [!] $pkg (will auto-install on first run)" -ForegroundColor DarkGray
+            $fail++
         }
     }
 }
+Write-Host "  Packages: $ok/$($packages.Count)" -ForegroundColor $(if ($fail -eq 0) { "Green" } else { "Yellow" })
 
-Write-Host "  Result: $okCount OK, $failCount failed" -ForegroundColor $(if ($failCount -eq 0) { "Green" } else { "Yellow" })
-
-# STEP 4: Create global command
-Write-Host "  [4/5] Creating 'auracode' command..." -ForegroundColor Yellow
+# ====================================================================
+# STEP 5: Create global command
+# ====================================================================
+Write-Host "  [5/5] Creating command..." -ForegroundColor Yellow
 
 if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
 
@@ -162,7 +188,7 @@ if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Forc
 title AuraCode v2.0
 cd /d "$InstallDir"
 if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
-"$venvPy" auracode.py
+"$venvPy" auracode.py %*
 if errorlevel 1 (
     echo.
     echo  AuraCode error. Make sure Python 3.10+ is installed.
@@ -171,42 +197,25 @@ if errorlevel 1 (
 "@ | Set-Content "$BinDir\auracode.bat" -NoNewline
 Copy-Item "$BinDir\auracode.bat" "$BinDir\auracode.cmd" -Force
 
+# Add to PATH
 $curPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($curPath -notlike "*$BinDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$curPath;$BinDir", "User")
     $env:Path += ";$BinDir"
 }
-Write-Host "  [OK] Command ready" -ForegroundColor Green
 
-# STEP 5: Verify
-Write-Host "  [5/5] Verifying..." -ForegroundColor Yellow
+Write-Host "  [OK] 'auracode' ready" -ForegroundColor Green
 
-$checks = @("rich", "questionary", "openai", "httpx", "pydantic", "dotenv")
-foreach ($c in $checks) {
-    $r = cmd /c "`"$venvPy`" -c `"import $c; print($c.__version__)`" 2>&1"
-    if ($r -match "\d") {
-        Write-Host "  [OK] $c : $r" -ForegroundColor Green
-    } else {
-        Write-Host "  [!!] $c : NOT INSTALLED" -ForegroundColor Red
-    }
-}
-
+# ====================================================================
+# DONE
+# ====================================================================
 Write-Host ""
 Write-Host "  ============================================" -ForegroundColor Green
-Write-Host "    AuraCode v2.0 Installed!" -ForegroundColor Green
+Write-Host "    Installed! Open NEW terminal and type:" -ForegroundColor Green
 Write-Host "  ============================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "  Open a NEW terminal and type:" -ForegroundColor White
 Write-Host ""
 Write-Host "    auracode" -ForegroundColor White -BackgroundColor DarkGreen
 Write-Host ""
-Write-Host "  Features:" -ForegroundColor Cyan
-Write-Host "    Ctrl+P     Command Palette" -ForegroundColor White
-Write-Host "    /connect   Setup AI provider" -ForegroundColor White
-Write-Host "    /agents    Switch agent" -ForegroundColor White
-Write-Host "    /model     Switch model" -ForegroundColor White
-Write-Host "    /session   Sessions" -ForegroundColor White
-Write-Host "    /help      All commands" -ForegroundColor White
-Write-Host ""
-Write-Host "  Files: $InstallDir" -ForegroundColor DarkGray
+Write-Host "  First run: AuraCode will auto-setup AI if needed" -ForegroundColor DarkGray
+Write-Host "  Commands: Ctrl+P (palette) | /connect | /help" -ForegroundColor DarkGray
 Write-Host ""
