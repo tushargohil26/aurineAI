@@ -201,24 +201,25 @@ if (-not (Test-Path "$venvDir\pyvenv.cfg")) {
     Get-Process python, pythonw -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 300
     if (Test-Path $venvDir) { Remove-Item $venvDir -Recurse -Force -ErrorAction SilentlyContinue }
-    cmd /c "`"$py`" -m venv `"$venvDir`"" 2>nul
+    Start-Process -FilePath "$py" -ArgumentList "-m venv `"$venvDir`"" -Wait -NoNewWindow -ErrorAction SilentlyContinue
 }
 
-# Upgrade pip silently
-cmd /c "`"$venvPy`" -m pip install --upgrade pip 2>nul" 2>nul | Out-Null
+# Upgrade pip
+Start-Process -FilePath "$venvPy" -ArgumentList "-m pip install --upgrade pip" -Wait -NoNewWindow -ErrorAction SilentlyContinue
 
 # Install packages one by one (NEVER crash)
 $packages = @("rich", "questionary", "openai", "httpx", "pydantic", "python-dotenv", "pygments")
 $ok = 0
 $fail = 0
 foreach ($pkg in $packages) {
-    cmd /c "`"$venvPy`" -m pip install $pkg 2>&1" | Out-Null
+    Start-Process -FilePath "$venvPy" -ArgumentList "-m pip install $pkg" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+    $check = cmd /c "`"$venvPy`" -c `"import $($pkg.Replace('-','_'))`"" 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] $pkg" -ForegroundColor Green
         $ok++
     } else {
-        # Retry once
-        cmd /c "`"$venvPy`" -m pip install $pkg --force-reinstall 2>&1" | Out-Null
+        Start-Process -FilePath "$venvPy" -ArgumentList "-m pip install $pkg --force-reinstall" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+        $check2 = cmd /c "`"$venvPy`" -c `"import $($pkg.Replace('-','_'))`"" 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [OK] $pkg" -ForegroundColor Green
             $ok++
