@@ -240,20 +240,17 @@ if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Forc
 
 $batContent = @"
 @echo off
-title AuraCode v2.0
 cd /d "$InstallDir"
-if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
 if not exist ".venv\Scripts\python.exe" (
-    echo   Setting up Python environment...
     "$py" -m venv .venv 2>nul
+)
+if not exist ".venv\Scripts\python.exe" (
+    echo   [X] Python 3.10+ needed. Install from python.org
+    pause
+    exit /b 1
 )
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt -q 2>nul
 ".venv\Scripts\python.exe" auracode.py %*
-if errorlevel 1 (
-    echo.
-    echo  AuraCode error. Make sure Python 3.10+ is installed.
-    pause
-)
 "@
 $batContent | Set-Content "$BinDir\auracode.bat" -NoNewline -Encoding ASCII
 Copy-Item "$BinDir\auracode.bat" "$BinDir\auracode.cmd" -Force
