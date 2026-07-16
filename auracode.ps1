@@ -10,20 +10,50 @@ if (-not $env:AURACODE_TERMINAL_CHILD) {
 
 $Host.UI.RawUI.WindowTitle = "AuraCode"
 Clear-Host
-Write-Host ""
-Write-Host "  AuraCode" -ForegroundColor Cyan
-Write-Host "  v1.0" -ForegroundColor DarkGray
-Write-Host ""
 
+# === AUTO-UPDATE FROM GITHUB ===
+if (Test-Path ".git") {
+    Write-Host "  Checking for updates..." -ForegroundColor DarkGray
+    try {
+        $before = (git rev-parse HEAD 2>$null).Trim()
+        git pull origin main --quiet 2>$null
+        $after = (git rev-parse HEAD 2>$null).Trim()
+        if ($before -ne $after) {
+            Write-Host "  Updated to latest version!" -ForegroundColor Green
+            Write-Host "  Restarting..." -ForegroundColor DarkGray
+            Start-Process powershell.exe -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-Command", "`$env:AURACODE_TERMINAL_CHILD='1'; Set-Location '$PWD'; & '$PSCommandPath'")
+            exit 0
+        } else {
+            Write-Host "  Up to date." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "  Update check skipped." -ForegroundColor DarkGray
+    }
+}
+
+# === ENSURE .ENV ===
 if (-not (Test-Path ".env")) {
-  if (Test-Path ".env.example") { Copy-Item ".env.example" ".env" }
-  else { Set-Content ".env" "AI_PROVIDER=aurine`n" }
-  Write-Host "  Created .env config." -ForegroundColor Yellow
+    if (Test-Path ".env.example") { Copy-Item ".env.example" ".env" }
+    else { Set-Content ".env" "AI_PROVIDER=aurine`nGOOGLE_API_KEY=`nOPENAI_API_KEY=" }
+    Write-Host "  Created .env config." -ForegroundColor Yellow
 }
 
-if (-not (Test-Path ".venv")) {
-  python -m venv .venv
+# === ENSURE VENV + DEPS ===
+if (-not (Test-Path ".venv\Scripts\python.exe")) {
+    Write-Host "  Setting up Python environment..." -ForegroundColor DarkGray
+    python -m venv .venv 2>$null
 }
-
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -q 2>$null
+
+# === ENSURE DEVICE DATA DIR ===
+$dataDir = "$env:USERPROFILE\.aurine-data"
+if (-not (Test-Path $dataDir)) {
+    New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+}
+
+Write-Host ""
+Write-Host "  AuraCode v1.0" -ForegroundColor Cyan
+Write-Host ""
+
+# === LAUNCH ===
 .\.venv\Scripts\python.exe auracode.py

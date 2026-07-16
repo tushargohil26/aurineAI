@@ -554,16 +554,33 @@ def aurine_status() -> dict:
     settings = get_settings()
     installed = installed_ollama_models()
     builtin = ["aurine-native", "aurine-coder", "aurine", settings.aurine_native_model, settings.ollama_chat_model]
+
+    cloud_keys = {}
+    if settings.google_api_key:
+        cloud_keys["google"] = True
+    if settings.openai_api_key:
+        cloud_keys["openai"] = True
+    if settings.groq_api_key:
+        cloud_keys["groq"] = True
+    if settings.anthropic_api_key:
+        cloud_keys["anthropic"] = True
+    if settings.deepseek_api_key:
+        cloud_keys["deepseek"] = True
+    if settings.openrouter_api_key:
+        cloud_keys["openrouter"] = True
+
     return {
-        "provider": "aurine",
-        "runtime": "local",
-        "engine": "ollama",
+        "provider": settings.ai_provider,
+        "runtime": "local" if installed else "cloud",
+        "engine": "ollama" if installed else "cloud-api",
         "native_model": settings.aurine_native_model,
         "embedding_model": settings.aurine_embedding_model,
         "database": str(settings.vector_db),
         "api_base": "/v1",
         "models": sorted(set([item for item in builtin + installed if item])),
         "ollama_running": bool(installed),
+        "cloud_keys": list(cloud_keys.keys()),
+        "auto_fallback": not bool(installed) and bool(cloud_keys),
         "streaming": True,
         "tools": True,
         "agents": True,

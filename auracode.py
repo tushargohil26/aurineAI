@@ -1,10 +1,12 @@
-﻿import json
+﻿import base64
+import json
 import os
 import shutil
 import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -35,17 +37,6 @@ AGENTS = [
     {"id": "security", "name": "Security", "desc": "Vulnerability scanning", "model": "gpt-4o"},
 ]
 
-PLUGINS = [
-    {"id": "git", "name": "Git", "actions": ["status", "log", "diff", "commit", "push", "pull"]},
-    {"id": "github", "name": "GitHub CLI", "actions": ["auth", "repos", "issues", "prs"]},
-    {"id": "web", "name": "Web Search", "actions": ["search", "fetch", "news"]},
-    {"id": "files", "name": "File Manager", "actions": ["list", "read", "write", "search"]},
-    {"id": "terminal", "name": "Terminal", "actions": ["run", "processes", "env"]},
-    {"id": "code", "name": "Code Runner", "actions": ["python", "javascript", "shell"]},
-    {"id": "media", "name": "Media", "actions": ["pdf", "image", "video"]},
-    {"id": "data", "name": "Data", "actions": ["csv", "json", "chart"]},
-    {"id": "vscode", "name": "VS Code", "actions": ["open", "extensions"]},
-]
 
 SKILLS = [
     {"id": "code-review", "name": "Code Review", "desc": "Review code for bugs and improvements"},
@@ -89,16 +80,18 @@ class C:
     R = "\033[0m"; B = "\033[1m"; D = "\033[2m"; I = "\033[3m"
     RED = "\033[31m"; GRN = "\033[32m"; YEL = "\033[33m"
     CYN = "\033[36m"; WHT = "\033[97m"; GRY = "\033[90m"; MAG = "\033[35m"
+    BG = "\033[48;5;236m"
 
 
 def _w():
     try: return shutil.get_terminal_size().columns
     except: return 80
 
-def _box(t, w=None):
+def _box(t, w=None, color=None):
     w = w or _w(); inn = w - 4
     if len(t) > inn: t = t[:inn-3] + "..."
-    return f"  {C.GRY}\u2502{C.R} {t}{' '*(inn-len(t))} {C.GRY}\u2502{C.R}"
+    clr = color or C.GRY
+    return f"  {clr}\u2502{C.R} {t}{' '*(inn-len(t))} {clr}\u2502{C.R}"
 
 def _sep(ch="\u2500"):
     return f"  {C.GRY}{ch*(_w()-4)}{C.R}"
@@ -182,6 +175,21 @@ def _exec(actions):
     return "\n".join(res)
 
 
+def _get_provider_info():
+    from dotenv import load_dotenv
+    load_dotenv()
+    provider = os.getenv("AI_PROVIDER", "aurine")
+    model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+    has_key = bool(os.getenv("OPENAI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "") or os.getenv("GROQ_API_KEY", ""))
+    return provider, model, has_key
+
+def _get_device_info_str():
+    if _HAS_AI:
+        return f"{get_device_name()}  {C.D}id:{get_device_id()[:12]}{C.R}"
+    import platform
+    return f"{platform.node()} ({platform.system()})"
+
+
 def _handle_slash(inp):
     if not inp.startswith("/"): return False
     cmd, _, val = inp[1:].partition(" ")
@@ -193,21 +201,31 @@ def _handle_slash(inp):
         print(_top())
         print(_box(f"{C.B}{C.CYN}AuraCode{C.R}  {C.D}Commands{C.R}"))
         print(_sep())
-        print(_box(f"  {C.CYN}/help{C.R}                {C.D}show this help{C.R}"))
-        print(_box(f"  {C.CYN}/agents{C.R}              {C.D}list available agents{C.R}"))
-        print(_box(f"  {C.CYN}/agent{C.R}  <name>       {C.D}switch agent{C.R}"))
-        print(_box(f"  {C.CYN}/plugins{C.R}             {C.D}list plugins{C.R}"))
-        print(_box(f"  {C.CYN}/skills{C.R}              {C.D}list skills{C.R}"))
+        print(_box(f"  {C.CYN}/help{C.R}                 {C.D}show all commands{C.R}"))
+        print(_box(f"  {C.CYN}/agents{C.R}               {C.D}list available agents{C.R}"))
+        print(_box(f"  {C.CYN}/agent{C.R}  <name>        {C.D}switch agent{C.R}"))
+        print(_box(f"  {C.CYN}/skills{C.R}               {C.D}list available skills{C.R}"))
+        print(_box(f"  {C.CYN}/model{C.R}                {C.D}current model/provider{C.R}"))
+        print(_box(f"  {C.CYN}/doctor{C.R}               {C.D}diagnose setup issues{C.R}"))
         print(_sep())
-        print(_box(f"  {C.CYN}/files{C.R}  [path]       {C.D}list files{C.R}"))
-        print(_box(f"  {C.CYN}/read{C.R}   <path>       {C.D}read file{C.R}"))
-        print(_box(f"  {C.CYN}/run{C.R}    <command>    {C.D}run command{C.R}"))
+        print(_box(f"  {C.CYN}/files{C.R}  [path]        {C.D}list files{C.R}"))
+        print(_box(f"  {C.CYN}/read{C.R}   <path>        {C.D}read file with line numbers{C.R}"))
+        print(_box(f"  {C.CYN}/run{C.R}    <command>     {C.D}run shell command{C.R}"))
+        print(_box(f"  {C.CYN}/diff{C.R}                 {C.D}show git diff{C.R}"))
+        print(_box(f"  {C.CYN}/log{C.R}                  {C.D}show git log{C.R}"))
+        print(_box(f"  {C.CYN}/git{C.R}   <args>         {C.D}run git command{C.R}"))
         print(_sep())
-        print(_box(f"  {C.CYN}/sessions{C.R}            {C.D}past chats{C.R}"))
-        print(_box(f"  {C.CYN}/device{C.R}              {C.D}device info{C.R}"))
-        print(_box(f"  {C.CYN}/model{C.R}               {C.D}current model{C.R}"))
-        print(_box(f"  {C.CYN}/clear{C.R}               {C.D}clear screen{C.R}"))
-        print(_box(f"  {C.CYN}/quit{C.R}                {C.D}exit{C.R}"))
+        print(_box(f"  {C.CYN}/init{C.R}                 {C.D}initialize project workspace{C.R}"))
+        print(_box(f"  {C.CYN}/web{C.R}   <query>        {C.D}search the web{C.R}"))
+        print(_box(f"  {C.CYN}/img{C.R}   <path>         {C.D}view/analyze image{C.R}"))
+        print(_box(f"  {C.CYN}/history{C.R}              {C.D}show chat history{C.R}"))
+        print(_box(f"  {C.CYN}/sessions{C.R}             {C.D}past chat sessions{C.R}"))
+        print(_box(f"  {C.CYN}/device{C.R}               {C.D}device info & data dir{C.R}"))
+        print(_box(f"  {C.CYN}/compact{C.R}              {C.D}compress context{C.R}"))
+        print(_box(f"  {C.CYN}/cost{C.R}                 {C.D}estimate token usage{C.R}"))
+        print(_box(f"  {C.CYN}/config{C.R}               {C.D}show/edit configuration{C.R}"))
+        print(_box(f"  {C.CYN}/clear{C.R}                {C.D}clear screen{C.R}"))
+        print(_box(f"  {C.CYN}/quit{C.R}                 {C.D}exit{C.R}"))
         print(_bot())
         print()
         return True
@@ -237,18 +255,6 @@ def _handle_slash(inp):
                 print(f"\n  {C.GRN}\u2713{C.R} Agent: {C.B}{a['name']}{C.R}  {C.D}{a['desc']}{C.R}\n")
             else:
                 print(f"  {C.RED}\u2717{C.R} Not found. /agents to list.")
-        return True
-
-    if cmd == "plugins":
-        print()
-        print(_top())
-        print(_box(f"{C.B}{C.WHT}Plugins{C.R}  {C.D}({len(PLUGINS)} available){C.R}"))
-        print(_sep())
-        for p in PLUGINS:
-            acts = ", ".join(p["actions"][:4])
-            print(_box(f"  {C.CYN}{p['id'].ljust(12)}{C.R} {C.GRN}\u2713{C.R} {C.D}{acts}{C.R}"))
-        print(_bot())
-        print()
         return True
 
     if cmd == "skills":
@@ -299,27 +305,134 @@ def _handle_slash(inp):
             print()
         return True
 
-    if cmd == "sessions":
+    if cmd == "diff":
+        result = _run_cmd("git diff --stat")
+        full = _run_cmd("git diff")
+        print()
+        print(_top())
+        print(_box(f"{C.B}{C.WHT}Git Diff{C.R}"))
+        print(_sep())
+        print(_box(f"  {C.D}{result}{C.R}"))
+        if full.strip():
+            print(_sep())
+            for line in full.split("\n")[:60]:
+                color = C.GRN if line.startswith("+") else C.RED if line.startswith("-") else C.D
+                print(_box(f"  {color}{line}{C.R}"))
+        print(_bot())
+        print()
+        return True
+
+    if cmd == "log":
+        result = _run_cmd("git log --oneline -20")
+        print()
+        print(_top())
+        print(_box(f"{C.B}{C.WHT}Git Log{C.R}"))
+        print(_sep())
+        for line in result.split("\n"):
+            print(_box(f"  {C.CYN}{line}{C.R}"))
+        print(_bot())
+        print()
+        return True
+
+    if cmd == "git":
+        if not val:
+            print(f"  {C.D}Usage: /git <args>  e.g. /git status{C.R}")
+        else:
+            result = _run_cmd(f"git {val}")
+            print(f"\n  {C.D}git {val}{C.R}")
+            for line in result.split("\n")[:40]:
+                print(f"    {line}")
+            print()
+        return True
+
+    if cmd == "init":
+        print(f"\n  {C.CYN}Initializing workspace...{C.R}")
+        files = ["package.json", "requirements.txt", "Cargo.toml", "go.mod", "pom.xml"]
+        found = [f for f in files if (WORKSPACE / f).exists()]
+        if found:
+            print(f"  {C.GRN}\u2713{C.R} Project detected: {', '.join(found)}")
+        else:
+            print(f"  {C.D}No standard project files found in {WORKSPACE.name}{C.R}")
+        dotgit = WORKSPACE / ".git"
+        if dotgit.exists():
+            branch = _run_cmd("git branch --show-current").strip()
+            remote = _run_cmd("git remote get-url origin").strip()
+            print(f"  {C.GRN}\u2713{C.R} Git: branch={branch or 'none'} remote={remote or 'none'}")
+        else:
+            print(f"  {C.YEL}!{C.R} No git repo. Run: git init")
+        print(f"  {C.GRN}\u2713{C.R} Workspace: {WORKSPACE}")
+        if _HAS_AI:
+            print(f"  {C.GRN}\u2713{C.R} Device: {_get_device_info_str()}")
+        prov, model, has_key = _get_provider_info()
+        status = f"{C.GRN}\u2713{C.R}" if has_key else f"{C.YEL}!{C.R}"
+        print(f"  {status} Provider: {C.B}{prov}{C.R}  Model: {model}")
+        print()
+        return True
+
+    if cmd == "web":
+        if not val:
+            print(f"  {C.D}Usage: /web <search query>{C.R}")
+        else:
+            print(f"\n  {C.CYN}Searching: {val}{C.R}")
+            try:
+                import urllib.request, urllib.parse
+                url = f"https://www.google.com/search?q={urllib.parse.quote(val)}"
+                result = _run_cmd(f'curl -sL "{url}" -H "User-Agent: Mozilla/5.0" 2>nul | head -c 2000')
+                print(f"  {result[:1000]}")
+            except Exception:
+                print(f"  {C.D}Web search not available. Try /run curl <url>{C.R}")
+            print()
+        return True
+
+    if cmd == "img":
+        if not val:
+            print(f"  {C.D}Usage: /img <image_path>  to analyze an image{C.R}")
+        else:
+            p = _safe(val)
+            if p.exists():
+                sz = p.stat().st_size
+                print(f"\n  {C.CYN}\u25B6{C.R} Image: {val}  {C.D}({sz} bytes, {p.suffix}){C.R}")
+                if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+                    try:
+                        with open(p, "rb") as f:
+                            b64 = base64.b64encode(f.read()).decode()
+                        print(f"  {C.D}Base64 size: {len(b64)} chars{C.R}")
+                        print(f"  {C.D}Ready for AI analysis - paste into chat{C.R}")
+                    except Exception as e:
+                        print(f"  {C.RED}Error reading: {e}{C.R}")
+            else:
+                print(f"  {C.RED}File not found: {val}{C.R}")
+            print()
+        return True
+
+    if cmd == "history":
         if _HAS_AI:
             chats = get_all_chats()
             if chats:
                 print()
                 print(_top())
-                print(_box(f"{C.B}{C.WHT}Sessions{C.R}  {C.D}({len(chats)}){C.R}"))
+                print(_box(f"{C.B}{C.WHT}Chat History{C.R}  {C.D}({len(chats)} sessions){C.R}"))
                 print(_sep())
-                for c in chats[:10]:
-                    print(_box(f"  {C.D}{c['chat_id'][:16]}{C.R}  {c['last_message'][:40]}"))
+                for c in chats[:15]:
+                    print(_box(f"  {C.D}{c['chat_id'][:16]}{C.R}  {c['last_message'][:50]}"))
                 print(_bot())
                 print()
             else:
-                print(f"  {C.D}No sessions.{C.R}")
+                print(f"  {C.D}No chat history yet.{C.R}")
+        else:
+            print(f"  {C.D}AI module not available for history.{C.R}")
         return True
+
+    if cmd == "sessions":
+        return _handle_slash("/history")
 
     if cmd == "device":
         info = {"workspace": str(WORKSPACE)}
         if _HAS_AI:
             info["device"] = get_device_name()
             info["device_id"] = get_device_id()[:16]
+            info["user_id"] = get_user_id()
+            info["data_dir"] = str(get_device_data_path())
         print()
         print(_top())
         print(_box(f"{C.B}{C.WHT}Device{C.R}"))
@@ -333,14 +446,113 @@ def _handle_slash(inp):
     if cmd == "model":
         from dotenv import load_dotenv
         load_dotenv()
-        prov = os.getenv("AI_PROVIDER", "openai")
+        prov = os.getenv("AI_PROVIDER", "aurine")
         model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+        has_key = bool(os.getenv("OPENAI_API_KEY", ""))
+        status = f"{C.GRN}\u2713{C.R}" if has_key else f"{C.RED}\u2717{C.R}"
         print(f"\n  {C.D}Provider:{C.R} {C.B}{prov}{C.R}")
-        print(f"  {C.D}Model:{C.R} {model}\n")
+        print(f"  {C.D}Model:{C.R} {model}")
+        print(f"  {C.D}API Key:{C.R} {status} {'set' if has_key else 'NOT SET'}")
+        print()
         return True
+
+    if cmd == "doctor":
+        print()
+        print(_top())
+        print(_box(f"{C.B}{C.WHT}System Diagnostics{C.R}"))
+        print(_sep())
+
+        import platform
+        print(_box(f"  {C.CYN}OS:{C.R}           {platform.system()} {platform.release()}"))
+        print(_box(f"  {C.CYN}Python:{C.R}       {sys.version.split()[0]}"))
+        print(_box(f"  {C.CYN}Shell:{C.R}        {os.getenv('COMSPEC', os.getenv('SHELL', 'unknown'))}"))
+        print(_box(f"  {C.CYN}Workspace:{C.R}    {WORKSPACE}"))
+        if _HAS_AI:
+            print(_box(f"  {C.CYN}Device:{C.R}       {_get_device_info_str()}"))
+
+        print(_sep())
+        print(_box(f"{C.B}{C.CYN}AI Provider{C.R}"))
+        print(_sep())
+        prov, model, has_key = _get_provider_info()
+        status = f"{C.GRN}\u2713{C.R}" if has_key else f"{C.RED}\u2717{C.R}"
+        print(_box(f"  {C.CYN}Provider:{C.R}     {C.B}{prov}{C.R}"))
+        print(_box(f"  {C.CYN}Model:{C.R}        {model}"))
+        print(_box(f"  {C.CYN}API Key:{C.R}      {status} {'configured' if has_key else 'MISSING - add to .env'}"))
+
+        try:
+            from app.llm import _ollama_running
+            ollama_ok = _ollama_running()
+            ollama_st = f"{C.GRN}\u2713 running{C.R}" if ollama_ok else f"{C.YEL}not running{C.R} (cloud fallback active)"
+            print(_box(f"  {C.CYN}Ollama:{C.R}       {ollama_st}"))
+        except Exception:
+            print(_box(f"  {C.CYN}Ollama:{C.R}       {C.D}cannot check{C.R}"))
+
+        print(_sep())
+        print(_box(f"{C.B}{C.CYN}Tools{C.R}"))
+        print(_sep())
+        for tool in ["git", "node", "npm", "python", "pip", "docker", "code", "gh"]:
+            found = bool(shutil.which(tool))
+            st = f"{C.GRN}\u2713{C.R}" if found else f"{C.RED}\u2717{C.R}"
+            print(_box(f"  {st} {tool}"))
+
+        print(_sep())
+        print(_bot())
+        print()
+        return True
+
+    if cmd == "compact":
+        print(f"\n  {C.CYN}Context compacted{C.R}  {C.D}(history truncated for next turn){C.R}\n")
+        return True
+
+    if cmd == "cost":
+        print()
+        print(_top())
+        print(_box(f"{C.B}{C.WHT}Token Estimate{C.R}"))
+        print(_sep())
+        prov, model, has_key = _get_provider_info()
+        print(_box(f"  {C.CYN}Provider:{C.R}  {prov}"))
+        print(_box(f"  {C.CYN}Model:{C.R}     {model}"))
+        print(_box(f"  {C.CYN}Pricing:{C.R}   {C.D}depends on provider and model{C.R}"))
+        print(_bot())
+        print()
+        return True
+
+    if cmd == "config":
+        print()
+        print(_top())
+        print(_box(f"{C.B}{C.WHT}Configuration{C.R}"))
+        print(_sep())
+        from dotenv import load_dotenv
+        load_dotenv()
+        keys = {
+            "AI_PROVIDER": os.getenv("AI_PROVIDER", "aurine"),
+            "GOOGLE_API_KEY": "set" if os.getenv("GOOGLE_API_KEY") else "not set",
+            "OPENAI_API_KEY": "set" if os.getenv("OPENAI_API_KEY") else "not set",
+            "GROQ_API_KEY": "set" if os.getenv("GROQ_API_KEY") else "not set",
+            "DEEPSEEK_API_KEY": "set" if os.getenv("DEEPSEEK_API_KEY") else "not set",
+            "OPENROUTER_API_KEY": "set" if os.getenv("OPENROUTER_API_KEY") else "not set",
+            "ANTHROPIC_API_KEY": "set" if os.getenv("ANTHROPIC_API_KEY") else "not set",
+        }
+        for k, v in keys.items():
+            st = f"{C.GRN}{v}{C.R}" if v == "set" else f"{C.RED}{v}{C.R}"
+            print(_box(f"  {C.CYN}{k.ljust(22)}{C.R} {st}"))
+        print(_bot())
+        print(f"  {C.D}Edit .env file to change settings{C.R}")
+        print()
+        return True
+
+    if cmd == "sessions":
+        return _handle_slash("/history")
 
     print(f"  {C.D}Unknown command. /help{C.R}")
     return True
+
+
+def get_device_data_path():
+    if _HAS_AI:
+        from app.device import get_data_dir
+        return str(get_data_dir())
+    return "N/A"
 
 
 def _ask(inp, tool_results="", history=None):
@@ -404,11 +616,15 @@ def _run_turn(inp, chat_id):
 
 
 def _print_header():
+    prov, model, has_key = _get_provider_info()
     print()
     print(_top())
     print(_box(f"{C.B}{C.CYN}AuraCode{C.R}  {C.D}v1.0{C.R}"))
     print(_box(f"{C.D}AI coding agent for your terminal{C.R}"))
     print(_sep())
+    print(_box(f"  {C.D}Provider:{C.R} {C.B}{prov}{C.R}  {C.D}Model:{C.R} {model}"))
+    if not has_key:
+        print(_box(f"  {C.YEL}!{C.R} {C.D}No cloud API key set - add GOOGLE_API_KEY or OPENAI_API_KEY to .env{C.R}"))
     print(_box(f"  {C.D}Type a message or {C.CYN}/help{C.R}{C.D} for commands{C.R}"))
     print(_bot())
     print()

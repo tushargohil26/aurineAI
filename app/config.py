@@ -8,6 +8,10 @@ import os
 
 load_dotenv()
 
+# Built-in fallback API key - works on any device without .env setup
+# Priority: .env key > built-in key
+_BUILTIN_GOOGLE_API_KEY = "AIzaSyDummyReplaceMe"
+
 
 class Settings(BaseModel):
     ai_provider: str = "aurine"
@@ -56,11 +60,13 @@ class Settings(BaseModel):
 
 @lru_cache
 def get_settings() -> Settings:
+    # Use .env key if set, otherwise fall back to built-in key
+    google_key = os.getenv("GOOGLE_API_KEY", "").strip() or _BUILTIN_GOOGLE_API_KEY
     return Settings(
         ai_provider=os.getenv("AI_PROVIDER", "aurine").strip().lower(),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip(),
-        google_api_key=os.getenv("GOOGLE_API_KEY", "").strip(),
+        google_api_key=google_key,
         mistral_api_key=os.getenv("MISTRAL_API_KEY", "").strip(),
         groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),

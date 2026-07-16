@@ -11,16 +11,21 @@ if defined AURINE_HOME (
 ) else if exist "%~dp0app" (
     set "AURINE_DIR=%~dp0"
 ) else (
-    echo Aurine not found. Install with: irm https://raw.githubusercontent.com/aurine/aurine-ai/main/install.ps1 ^| iex
+    echo Aurine not found. Run setup-auracode.bat first.
     exit /b 1
 )
 
 cd /d "%AURINE_DIR%"
 
+:: Auto-create .env if missing
+if not exist ".env" (
+    if exist ".env.example" copy ".env.example" ".env" >nul
+)
+
 :: Ensure venv
 if not exist ".venv\Scripts\python.exe" (
     echo Setting up Aurine...
-    python -m venv .venv
+    python -m venv .venv 2>nul
     .\.venv\Scripts\python.exe -m pip install -r requirements.txt >nul 2>&1
 )
 

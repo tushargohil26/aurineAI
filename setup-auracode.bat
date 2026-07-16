@@ -1,5 +1,5 @@
 @echo off
-:: AuraCode Setup - Run once
+:: AuraCode Setup - Run once, then 'auracode' works from any terminal
 echo.
 echo   AuraCode Setup
 echo.

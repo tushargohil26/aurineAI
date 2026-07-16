@@ -12,8 +12,55 @@ from .config import get_settings
 _client_cache: dict[str, OpenAI] = {}
 
 
+def _ollama_running() -> bool:
+    settings = get_settings()
+    try:
+        req = urllib.request.Request(
+            f"{settings.ollama_base_url}/api/tags",
+            headers={"Content-Type": "application/json"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=3) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def _auto_fallback_provider() -> tuple[str, str, str]:
+    settings = get_settings()
+    if settings.google_api_key:
+        return "google", settings.google_chat_model, settings.google_api_key
+    if settings.openai_api_key:
+        return "openai", settings.chat_model, settings.openai_api_key
+    if settings.groq_api_key:
+        return "groq", settings.groq_chat_model, settings.groq_api_key
+    if settings.deepseek_api_key:
+        return "deepseek", settings.deepseek_chat_model, settings.deepseek_api_key
+    if settings.anthropic_api_key:
+        return "anthropic", settings.anthropic_chat_model, settings.anthropic_api_key
+    if settings.mistral_api_key:
+        return "mistral", settings.mistral_chat_model, settings.mistral_api_key
+    if settings.openrouter_api_key:
+        return "openrouter", settings.openrouter_chat_model, settings.openrouter_api_key
+    return "", "", ""
+
+
 def _ollama_post(path: str, payload: dict) -> dict:
     settings = get_settings()
+    if not _ollama_running():
+        fb_provider, fb_model, fb_key = _auto_fallback_provider()
+        if fb_provider:
+            _fallback_provider_override = {"provider": fb_provider, "model": fb_model, "api_key": fb_key}
+            raise _OllamaFallbackError(fb_provider, fb_model, _fallback_provider_override)
+        raise RuntimeError(
+            "Ollama is not running and no cloud API key found.\n\n"
+            "Options:\n"
+            "1. Start Ollama: ollama pull qwen2.5-coder:7b\n"
+            "2. Set a cloud API key in .env:\n"
+            "   GOOGLE_API_KEY=your_key (free at https://aistudio.google.com/app/apikey)\n"
+            "   OPENAI_API_KEY=your_key\n"
+            "   GROQ_API_KEY=your_key (free at https://console.groq.com/keys)"
+        )
     request = urllib.request.Request(
         f"{settings.ollama_base_url}{path}",
         data=json.dumps(payload).encode("utf-8"),
@@ -31,8 +78,26 @@ def _ollama_post(path: str, payload: dict) -> dict:
         ) from exc
 
 
+class _OllamaFallbackError(Exception):
+    def __init__(self, provider: str, model: str, config: dict):
+        self.provider = provider
+        self.model = model
+        self.config = config
+        super().__init__(f"Ollama unavailable, falling back to {provider}:{model}")
+
+
 def _ollama_stream(path: str, payload: dict) -> Generator[str, None, None]:
     settings = get_settings()
+    if not _ollama_running():
+        fb_provider, fb_model, fb_key = _auto_fallback_provider()
+        if fb_provider:
+            raise _OllamaFallbackError(fb_provider, fb_model, {"provider": fb_provider, "model": fb_model, "api_key": fb_key})
+        raise RuntimeError(
+            "Ollama is not running and no cloud API key found.\n\n"
+            "Options:\n"
+            "1. Start Ollama: ollama pull qwen2.5-coder:7b\n"
+            "2. Set GOOGLE_API_KEY in .env (free at https://aistudio.google.com/app/apikey)"
+        )
     request = urllib.request.Request(
         f"{settings.ollama_base_url}{path}",
         data=json.dumps(payload).encode("utf-8"),
@@ -369,8 +434,14 @@ def chat_completion(
         }
         if json_mode:
             payload["format"] = "json"
-        response = _ollama_post("/api/chat", payload)
-        return response.get("message", {}).get("content", "")
+        try:
+            response = _ollama_post("/api/chat", payload)
+            return response.get("message", {}).get("content", "")
+        except _OllamaFallbackError as fb:
+            return chat_completion(
+                messages=messages, temperature=temperature,
+                json_mode=json_mode, model_config=fb.config
+            )
 
     raise RuntimeError(f"AI provider '{provider}' is not supported. Use aurine, ollama, openai, anthropic, google, groq, or custom.")
 
@@ -431,15 +502,54 @@ def chat_completion_stream(
             "stream": True,
             "options": {"temperature": temperature},
         }
-        yield from _ollama_stream("/api/chat", payload)
-        return
+        try:
+            yield from _ollama_stream("/api/chat", payload)
+            return
+        except _OllamaFallbackError as fb:
+            yield from chat_completion_stream(
+                messages=messages, temperature=temperature, model_config=fb.config
+            )
+            return
 
     raise RuntimeError(f"AI provider '{provider}' is not supported. Use aurine, ollama, openai, anthropic, google, groq, or custom.")
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     settings = get_settings()
-    embeddings: list[list[float]] = []
+    if _ollama_running():
+        embeddings: list[list[float]] = []
+        for text in texts:
+            try:
+                response = _ollama_post(
+                    "/api/embeddings",
+                    {"model": settings.aurine_embedding_model, "prompt": text},
+                )
+                embeddings.append(response.get("embedding", []))
+            except Exception:
+                break
+        else:
+            if embeddings and all(len(e) > 0 for e in embeddings):
+                return embeddings
+
+    if settings.openai_api_key:
+        try:
+            client = _get_openai_client(settings.openai_api_key)
+            response = client.embeddings.create(
+                model=settings.embedding_model or "text-embedding-3-small",
+                input=texts,
+            )
+            return [item.embedding for item in response.data]
+        except Exception:
+            pass
+
+    if not _ollama_running():
+        raise RuntimeError(
+            "Embeddings require Ollama or an OpenAI-compatible API key.\n"
+            "1. Start Ollama: ollama pull nomic-embed-text\n"
+            "2. Or set OPENAI_API_KEY in .env"
+        )
+
+    embeddings = []
     for text in texts:
         response = _ollama_post(
             "/api/embeddings",
