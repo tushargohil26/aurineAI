@@ -13,10 +13,12 @@ Write-Host "  ============================================" -ForegroundColor Cya
 Write-Host ""
 
 # ====================================================================
-# STEP 1: Find Python (never crash)
+# STEP 1: Find or Install Python (NEVER crash, auto-install)
 # ====================================================================
 Write-Host "  [1/5] Python..." -ForegroundColor Yellow
 $py = $null
+
+# Check existing Python
 foreach ($c in @("python", "python3", "py")) {
     try {
         $v = & $c --version 2>&1 | Out-String
@@ -26,19 +28,71 @@ foreach ($c in @("python", "python3", "py")) {
         }
     } catch {}
 }
+
+# Not found - try to install automatically
 if (-not $py) {
-    Write-Host "  Python not found. Installing..." -ForegroundColor Yellow
+    Write-Host "  Python not found. Installing automatically..." -ForegroundColor Yellow
+
+    # Method 1: Try winget
+    $installed = $false
     try {
-        Start-Process winget -ArgumentList "install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements" -Wait -NoNewWindow -ErrorAction SilentlyContinue
-        $env:Path = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts;" + $env:Path
-        foreach ($c in @("python", "python3")) {
-            try { $v = & $c --version 2>&1 | Out-String; if ($v -match "Python 3") { $py = $c; break } } catch {}
+        $winget = Get-Command winget -ErrorAction SilentlyContinue
+        if ($winget) {
+            Write-Host "  Trying winget..." -ForegroundColor DarkGray
+            Start-Process winget -ArgumentList "install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+            $env:Path = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts;$env:LOCALAPPDATA\Programs\Python\Python311;$env:LOCALAPPDATA\Programs\Python\Python311\Scripts;" + $env:Path
+            foreach ($c in @("python", "python3", "py")) {
+                try { $v = & $c --version 2>&1 | Out-String; if ($v -match "Python 3\.(\d+)") { $minor = [int]$Matches[1]; if ($minor -ge 10) { $py = $c; $installed = $true; break } } } catch {}
+            }
         }
     } catch {}
+
+    # Method 2: Download Python installer directly from python.org
+    if (-not $installed) {
+        Write-Host "  Downloading Python from python.org..." -ForegroundColor DarkGray
+        $pyUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
+        $pyInstaller = "$env:TEMP\python_installer.exe"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+            Write-Host "  Installing Python (silent)..." -ForegroundColor DarkGray
+            Start-Process $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+            # Refresh PATH
+            $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
+            foreach ($c in @("python", "python3", "py")) {
+                try { $v = & $c --version 2>&1 | Out-String; if ($v -match "Python 3\.(\d+)") { $minor = [int]$Matches[1]; if ($minor -ge 10) { $py = $c; $installed = $true; break } } } catch {}
+            }
+            Remove-Item $pyInstaller -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "  Download failed: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
+    }
+
+    # Method 3: Try choco
+    if (-not $installed) {
+        try {
+            $choco = Get-Command choco -ErrorAction SilentlyContinue
+            if ($choco) {
+                Write-Host "  Trying chocolatey..." -ForegroundColor DarkGray
+                Start-Process choco -ArgumentList "install python -y" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
+                foreach ($c in @("python", "python3", "py")) {
+                    try { $v = & $c --version 2>&1 | Out-String; if ($v -match "Python 3\.(\d+)") { $minor = [int]$Matches[1]; if ($minor -ge 10) { $py = $c; $installed = $true; break } } } catch {}
+                }
+            }
+        } catch {}
+    }
 }
+
 if (-not $py) {
-    Write-Host "  [X] Python 3.10+ required. Install from python.org" -ForegroundColor Red
-    Write-Host "  Then re-run this command." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  [X] Python 3.10+ could not be installed automatically." -ForegroundColor Red
+    Write-Host "  Manual install:" -ForegroundColor Yellow
+    Write-Host "    1. Go to https://www.python.org/downloads/" -ForegroundColor White
+    Write-Host "    2. Download Python 3.12+" -ForegroundColor White
+    Write-Host "    3. During install, CHECK 'Add Python to PATH'" -ForegroundColor White
+    Write-Host "    4. Re-run this command" -ForegroundColor White
+    Write-Host ""
     pause
     exit 1
 }
