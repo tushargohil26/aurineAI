@@ -1,4 +1,4 @@
-# AuraCode v2.0 - Universal Installer
+# AuraCode v2.1 - Universal Installer (v2.1.0 - cache bust)
 # Run on ANY Windows device: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
 
 $InstallDir = "$env:USERPROFILE\.aurine"
