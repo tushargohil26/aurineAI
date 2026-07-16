@@ -1242,7 +1242,17 @@ def _run_turn(inp, chat_id):
             try:
                 resp = _ask(inp, tool_results, history)
             except Exception as e:
-                console.print(f"\n  [red]✗ error:[/] {e}\n")
+                err = str(e)
+                if "400" in err or "401" in err or "403" in err or "Invalid" in err.lower():
+                    console.print(f"\n  [red]✗ AI Error:[/] {err}")
+                    console.print("  [yellow]Your API key may be invalid or missing.[/]")
+                    console.print("  [dim]Fix: type /connect to set up a working AI provider[/]\n")
+                elif "No AI backend" in err or "not available" in err.lower():
+                    console.print(f"\n  [red]✗ No AI backend available[/]")
+                    console.print("  [yellow]Fix: type /connect to set up an AI provider[/]")
+                    console.print("  [dim]Free options: Google Gemini, Groq, DeepSeek[/]\n")
+                else:
+                    console.print(f"\n  [red]✗ error:[/] {err}\n")
                 return
 
         msg = resp.get("message", "")

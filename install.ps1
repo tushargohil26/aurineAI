@@ -71,9 +71,23 @@ foreach ($f in @(".env.example", "requirements.txt")) {
     if (Test-Path $s) { Copy-Item $s (Join-Path $InstallDir $f) -Force }
 }
 
+# Only create .env if it doesn't exist (never overwrite existing keys)
 if (-not (Test-Path "$InstallDir\.env")) {
-    @"
-AI_PROVIDER=google
+    # Check if source repo has a .env with real keys to copy
+    $srcEnv = Join-Path $srcDir ".env"
+    $hasRealKeys = $false
+    if (Test-Path $srcEnv) {
+        $envContent = Get-Content $srcEnv -Raw -ErrorAction SilentlyContinue
+        if ($envContent -and ($envContent -match "GOOGLE_API_KEY=.{10,}" -or $envContent -match "OPENAI_API_KEY=.{10,}" -or $envContent -match "GROQ_API_KEY=.{10,}")) {
+            Copy-Item $srcEnv "$InstallDir\.env" -Force
+            $hasRealKeys = $true
+            Write-Host "  [OK] Copied existing API keys" -ForegroundColor Green
+        }
+    }
+    if (-not $hasRealKeys) {
+        # Default to aurine provider (auto-falls back to available cloud providers)
+        @"
+AI_PROVIDER=aurine
 GOOGLE_API_KEY=
 OPENAI_API_KEY=
 GROQ_API_KEY=
@@ -88,6 +102,8 @@ OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 VECTOR_DB=$InstallDir\vector_store.sqlite3
 DATA_DIR=$InstallDir\data
 "@ | Set-Content "$InstallDir\.env" -NoNewline
+        Write-Host "  [!] No API keys found. Use /connect in AuraCode to set one up." -ForegroundColor Yellow
+    }
 }
 
 Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
