@@ -29,12 +29,36 @@ try:
     _HAS_RICH = True
 except ImportError:
     _HAS_RICH = False
+    print("[AuraCode] rich not installed. Installing...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "rich", "-q"])
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.columns import Columns
+    from rich.text import Text
+    from rich.markdown import Markdown
+    from rich.syntax import Syntax
+    from rich.box import ROUNDED, HEAVY, DOUBLE, MINIMAL
+    from rich.live import Live
+    from rich.spinner import Spinner
+    from rich.layout import Layout
+    from rich.align import Align
+    from rich import box
+    _HAS_RICH = True
 
 try:
     import questionary
     _HAS_Q = True
 except ImportError:
     _HAS_Q = False
+    try:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "questionary", "-q"])
+        import questionary
+        _HAS_Q = True
+    except Exception:
+        _HAS_Q = False
 
 WORKSPACE = Path.cwd().resolve()
 
