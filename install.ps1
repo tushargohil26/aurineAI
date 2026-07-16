@@ -1,7 +1,6 @@
 # AuraCode v2.0 - One-Line Installer
 # Run: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
 
-$ErrorActionPreference = "Stop"
 $InstallDir = "$env:USERPROFILE\.aurine"
 $BinDir = "$InstallDir\bin"
 $RepoUrl = "https://github.com/tushargohil26/aurineAI"
@@ -18,7 +17,7 @@ Write-Host "  [1/5] Checking Python..." -ForegroundColor Yellow
 $py = $null
 foreach ($c in @("python", "python3", "py")) {
     try {
-        $v = & $c --version 2>&1
+        $v = & $c --version 2>&1 | Out-String
         if ($v -match "Python 3\.(\d+)") {
             $minor = [int]$Matches[1]
             if ($minor -ge 10) { $py = $c; break }
@@ -26,9 +25,9 @@ foreach ($c in @("python", "python3", "py")) {
     } catch {}
 }
 if (-not $py) {
-    Write-Host "  Installing Python..." -ForegroundColor Yellow
+    Write-Host "  Installing Python via winget..." -ForegroundColor Yellow
     try {
-        winget install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements
+        Start-Process winget -ArgumentList "install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements" -Wait -NoNewWindow
         $env:Path = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts;" + $env:Path
         $py = "python"
     } catch {
@@ -99,53 +98,47 @@ Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
 Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "  [OK] Downloaded" -ForegroundColor Green
 
-# STEP 3: Venv + ALL dependencies
-Write-Host "  [3/5] Installing Python packages (this takes ~1 min)..." -ForegroundColor Yellow
+# STEP 3: Venv + dependencies (CRITICAL: no $ErrorActionPreference = Stop here)
+Write-Host "  [3/5] Installing Python packages..." -ForegroundColor Yellow
 
 $venvDir = "$InstallDir\.venv"
 $venvPy = "$venvDir\Scripts\python.exe"
-$venvPip = "$venvDir\Scripts\pip.exe"
 
 if (-not (Test-Path "$venvDir\pyvenv.cfg")) {
     Get-Process python, pythonw -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 300
     if (Test-Path $venvDir) { Remove-Item $venvDir -Recurse -Force -ErrorAction SilentlyContinue }
-    & $py -m venv $venvDir
+    cmd /c "`"$py`" -m venv `"$venvDir`"" 2>$null
 }
 
-# Upgrade pip first
-& $venvPy -m pip install --upgrade pip -q 2>$null
+# Upgrade pip (ignore warnings)
+cmd /c "`"$venvPy`" -m pip install --upgrade pip 2>nul" 2>$null
 
-# Install ALL required packages - one by one to avoid failures
+# Install packages one by one
 $packages = @("rich", "questionary", "openai", "httpx", "pydantic", "python-dotenv", "pygments", "tiktoken")
-$failed = @()
+$okCount = 0
+$failCount = 0
 foreach ($pkg in $packages) {
-    Write-Host "  Installing $pkg..." -ForegroundColor DarkGray
-    & $venvPy -m pip install $pkg -q 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        # Retry without -q
-        & $venvPy -m pip install $pkg 2>$null
-    }
-    # Verify
-    $check = & $venvPy -c "import $($pkg.Replace('-','_').Split(' ')[0].ToLower())" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $failed += $pkg
-        Write-Host "  [!] $pkg failed" -ForegroundColor Red
-    } else {
+    $r = cmd /c "`"$venvPy`" -m pip install $pkg 2>&1"
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0) {
         Write-Host "  [OK] $pkg" -ForegroundColor Green
+        $okCount++
+    } else {
+        Write-Host "  [!] $pkg - retrying..." -ForegroundColor Yellow
+        cmd /c "`"$venvPy`" -m pip install $pkg --force-reinstall 2>&1" | Out-Null
+        $r2 = cmd /c "`"$venvPy`" -c `"import $($pkg.Replace('-','_'))`" 2>&1"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] $pkg (retry)" -ForegroundColor Green
+            $okCount++
+        } else {
+            Write-Host "  [X] $pkg FAILED" -ForegroundColor Red
+            $failCount++
+        }
     }
 }
 
-if ($failed.Count -gt 0) {
-    Write-Host ""
-    Write-Host "  Some packages failed: $($failed -join ', ')" -ForegroundColor Yellow
-    Write-Host "  Retrying failed packages..." -ForegroundColor Yellow
-    foreach ($pkg in $failed) {
-        & $venvPy -m pip install $pkg --force-reinstall 2>$null
-    }
-}
-
-Write-Host "  [OK] Packages installed" -ForegroundColor Green
+Write-Host "  Packages: $okCount OK, $failCount failed" -ForegroundColor $(if ($failCount -eq 0) { "Green" } else { "Yellow" })
 
 # STEP 4: Create global command
 Write-Host "  [4/5] Creating 'auracode' command..." -ForegroundColor Yellow
@@ -176,13 +169,15 @@ Write-Host "  [OK] Command ready" -ForegroundColor Green
 # STEP 5: Verify
 Write-Host "  [5/5] Verifying..." -ForegroundColor Yellow
 
-$richCheck = & $venvPy -c "import rich; print(rich.__version__)" 2>&1
-$qCheck = & $venvPy -c "import questionary; print(questionary.__version__)" 2>&1
-$openaiCheck = & $venvPy -c "import openai; print(openai.__version__)" 2>&1
-
-Write-Host "  rich: $richCheck" -ForegroundColor $(if ($richCheck -match "\d") { "Green" } else { "Red" })
-Write-Host "  questionary: $qCheck" -ForegroundColor $(if ($qCheck -match "\d") { "Green" } else { "Red" })
-Write-Host "  openai: $openaiCheck" -ForegroundColor $(if ($openaiCheck -match "\d") { "Green" } else { "Red" })
+$checks = @("rich", "questionary", "openai", "httpx", "pydantic", "dotenv")
+foreach ($c in $checks) {
+    $r = cmd /c "`"$venvPy`" -c `"import $c; print($c.__version__)`" 2>&1"
+    if ($r -match "\d") {
+        Write-Host "  [OK] $c : $r" -ForegroundColor Green
+    } else {
+        Write-Host "  [!!] $c : NOT INSTALLED" -ForegroundColor Red
+    }
+}
 
 Write-Host ""
 Write-Host "  ============================================" -ForegroundColor Green
