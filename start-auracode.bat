@@ -22,5 +22,12 @@ if not exist ".venv\Scripts\python.exe" (
 :: === ENSURE DEVICE DATA DIR ===
 if not exist "%USERPROFILE%\.aurine-data" mkdir "%USERPROFILE%\.aurine-data" >nul
 
+:: === ENSURE SESSIONS DIR ===
+if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
+
 :: === LAUNCH ===
+echo.
+echo   AuraCode v2.0 - OpenCode-style Terminal Agent
+echo   Ctrl+P: Command Palette  /connect: Setup AI  /help: All commands
+echo.
 ".venv\Scripts\python.exe" auracode.py

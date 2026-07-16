@@ -52,7 +52,8 @@ if (-not (Test-Path $dataDir)) {
 }
 
 Write-Host ""
-Write-Host "  AuraCode v1.0" -ForegroundColor Cyan
+Write-Host "  AuraCode v2.0 - OpenCode-style Terminal Agent" -ForegroundColor Cyan
+Write-Host "  Ctrl+P: Command Palette  |  /connect: Setup AI  |  /help: All commands" -ForegroundColor DarkGray
 Write-Host ""
 
 # === LAUNCH ===

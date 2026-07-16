@@ -115,6 +115,16 @@ foreach ($tool in $tools) {
 
 Write-Host ""
 Write-Host "  Done! Type 'auracode' in any terminal to start." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  AuraCode v2.0 Features:" -ForegroundColor Cyan
+Write-Host "    Ctrl+P     - Command Palette (fuzzy search all commands)" -ForegroundColor White
+Write-Host "    /connect   - Connect AI provider (set API keys)" -ForegroundColor White
+Write-Host "    /agents    - Switch AI agent" -ForegroundColor White
+Write-Host "    /model     - Switch AI model" -ForegroundColor White
+Write-Host "    /session   - Switch session" -ForegroundColor White
+Write-Host "    /new       - New session" -ForegroundColor White
+Write-Host "    /help      - Show all commands" -ForegroundColor White
+Write-Host ""
 Write-Host "  Auto-updates from GitHub on every launch." -ForegroundColor DarkGray
 Write-Host "  Each device has its own data in: $dataDir" -ForegroundColor DarkGray
 Write-Host ""
