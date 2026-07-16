@@ -6,7 +6,7 @@ from typing import Generator
 
 from openai import OpenAI
 
-from .config import get_settings
+from .config import get_settings, AURINE_API_KEY, AURINE_API_URL, _BUILTIN_KEYS
 
 # Connection pool for reuse
 _client_cache: dict[str, OpenAI] = {}
@@ -26,14 +26,28 @@ def _ollama_running() -> bool:
         return False
 
 
+def _aurine_server_running() -> bool:
+    try:
+        req = urllib.request.Request(
+            f"{AURINE_API_URL}/health",
+            headers={"Content-Type": "application/json"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=3) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
 def _auto_fallback_provider() -> tuple[str, str, str]:
     settings = get_settings()
+    # Priority: Google (built-in) → Groq (built-in) → OpenAI (.env) → others
     if settings.google_api_key:
         return "google", settings.google_chat_model, settings.google_api_key
-    if settings.openai_api_key:
-        return "openai", settings.chat_model, settings.openai_api_key
     if settings.groq_api_key:
         return "groq", settings.groq_chat_model, settings.groq_api_key
+    if settings.openai_api_key:
+        return "openai", settings.chat_model, settings.openai_api_key
     if settings.deepseek_api_key:
         return "deepseek", settings.deepseek_chat_model, settings.deepseek_api_key
     if settings.anthropic_api_key:
@@ -42,24 +56,99 @@ def _auto_fallback_provider() -> tuple[str, str, str]:
         return "mistral", settings.mistral_chat_model, settings.mistral_api_key
     if settings.openrouter_api_key:
         return "openrouter", settings.openrouter_chat_model, settings.openrouter_api_key
+    if settings.cerebras_api_key:
+        return "cerebras", settings.groq_chat_model, settings.cerebras_api_key
+    if settings.nvidia_api_key:
+        return "openai", "meta/llama-3.1-405b-instruct", settings.nvidia_api_key
+    if settings.sambanova_api_key:
+        return "openai", "Meta-Llama-3.1-405B-Instruct", settings.sambanova_api_key
     return "", "", ""
+
+
+def _aurine_server_post(messages: list[dict], temperature: float = 0.2,
+                        stream: bool = False, json_mode: bool = False) -> dict | Generator:
+    settings = get_settings()
+    payload = {
+        "model": "aurine",
+        "messages": messages,
+        "temperature": temperature,
+        "stream": stream,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.aurine_api_key}",
+    }
+
+    if stream:
+        return _aurine_stream_gen(settings.aurine_api_url, payload, headers)
+
+    request = urllib.request.Request(
+        f"{settings.aurine_api_url}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        choices = data.get("choices", [])
+        if choices:
+            return {"content": choices[0].get("message", {}).get("content", "")}
+        return {"content": ""}
+    except Exception as exc:
+        raise RuntimeError(f"Aurine server error: {exc}") from exc
+
+
+def _aurine_stream_gen(url: str, payload: dict, headers: dict) -> Generator[str, None, None]:
+    payload["stream"] = True
+    request = urllib.request.Request(
+        f"{url}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            for line in response:
+                line = line.decode("utf-8").strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                    choices = data.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                except json.JSONDecodeError:
+                    continue
+    except Exception as exc:
+        raise RuntimeError(f"Aurine server stream error: {exc}") from exc
 
 
 def _ollama_post(path: str, payload: dict) -> dict:
     settings = get_settings()
     if not _ollama_running():
+        # Try Aurine server next
+        if _aurine_server_running():
+            raise _AurineServerFallbackError()
+        # Then try cloud providers
         fb_provider, fb_model, fb_key = _auto_fallback_provider()
         if fb_provider:
-            _fallback_provider_override = {"provider": fb_provider, "model": fb_model, "api_key": fb_key}
-            raise _OllamaFallbackError(fb_provider, fb_model, _fallback_provider_override)
+            raise _OllamaFallbackError(fb_provider, fb_model, {"provider": fb_provider, "model": fb_model, "api_key": fb_key})
         raise RuntimeError(
-            "Ollama is not running and no cloud API key found.\n\n"
+            "No AI backend available.\n\n"
             "Options:\n"
             "1. Start Ollama: ollama pull qwen2.5-coder:7b\n"
-            "2. Set a cloud API key in .env:\n"
-            "   GOOGLE_API_KEY=your_key (free at https://aistudio.google.com/app/apikey)\n"
-            "   OPENAI_API_KEY=your_key\n"
-            "   GROQ_API_KEY=your_key (free at https://console.groq.com/keys)"
+            "2. Start Aurine server: aurine run\n"
+            "3. Add GOOGLE_API_KEY to .env (free at https://aistudio.google.com/app/apikey)"
         )
     request = urllib.request.Request(
         f"{settings.ollama_base_url}{path}",
@@ -84,6 +173,11 @@ class _OllamaFallbackError(Exception):
         self.model = model
         self.config = config
         super().__init__(f"Ollama unavailable, falling back to {provider}:{model}")
+
+
+class _AurineServerFallbackError(Exception):
+    def __init__(self):
+        super().__init__("Ollama unavailable, using Aurine server")
 
 
 def _ollama_stream(path: str, payload: dict) -> Generator[str, None, None]:
@@ -437,6 +531,20 @@ def chat_completion(
         try:
             response = _ollama_post("/api/chat", payload)
             return response.get("message", {}).get("content", "")
+        except _AurineServerFallbackError:
+            # Try Aurine server
+            try:
+                result = _aurine_server_post(messages, temperature, stream=False, json_mode=json_mode)
+                return result.get("content", "")
+            except Exception:
+                pass
+            # Fall through to cloud
+            fb_provider, fb_model, fb_key = _auto_fallback_provider()
+            if fb_provider:
+                return chat_completion(
+                    messages=messages, temperature=temperature,
+                    json_mode=json_mode, model_config={"provider": fb_provider, "model": fb_model, "api_key": fb_key}
+                )
         except _OllamaFallbackError as fb:
             return chat_completion(
                 messages=messages, temperature=temperature,
@@ -505,6 +613,21 @@ def chat_completion_stream(
         try:
             yield from _ollama_stream("/api/chat", payload)
             return
+        except _AurineServerFallbackError:
+            # Try Aurine server stream
+            try:
+                yield from _aurine_server_post(messages, temperature, stream=True)
+                return
+            except Exception:
+                pass
+            # Fall through to cloud
+            fb_provider, fb_model, fb_key = _auto_fallback_provider()
+            if fb_provider:
+                yield from chat_completion_stream(
+                    messages=messages, temperature=temperature,
+                    model_config={"provider": fb_provider, "model": fb_model, "api_key": fb_key}
+                )
+                return
         except _OllamaFallbackError as fb:
             yield from chat_completion_stream(
                 messages=messages, temperature=temperature, model_config=fb.config
