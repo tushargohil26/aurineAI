@@ -293,6 +293,77 @@ def extract_facts_from_message(message: str) -> None:
                 store_fact(category, key, value, confidence=0.9)
 
 
+def extract_coding_patterns(message: str, response: str) -> None:
+    """Extract coding patterns from conversation to learn user's style."""
+    import re
+
+    lang_patterns = [
+        (r"```python", "python"),
+        (r"```javascript|```js", "javascript"),
+        (r"```typescript|```ts", "typescript"),
+        (r"```java(?!\s*script)", "java"),
+        (r"```rust|```rs", "rust"),
+        (r"```go", "go"),
+        (r"```html", "html"),
+        (r"```css", "css"),
+        (r"```sql", "sql"),
+    ]
+    for pattern, lang in lang_patterns:
+        if re.search(pattern, message, re.IGNORECASE) or re.search(pattern, response, re.IGNORECASE):
+            learn_pattern("language", lang, f"User works with {lang}")
+
+    task_patterns = [
+        (r"(?:fix|debug|error|bug)", "debugging", "User asks for debugging help"),
+        (r"(?:create|build|make|write|implement)", "creation", "User asks to create code"),
+        (r"(?:explain|what is|how does)", "learning", "User asks for explanations"),
+        (r"(?:refactor|optimize|improve|clean)", "improvement", "User asks for code improvements"),
+        (r"(?:test|unit test|integration test)", "testing", "User asks for tests"),
+        (r"(?:deploy|docker|ci[/.]cd|kubernetes)", "devops", "User asks for deployment help"),
+        (r"(?:api|endpoint|rest|graphql)", "api_design", "User asks for API design"),
+        (r"(?:database|sql|query|schema)", "database", "User asks for database work"),
+    ]
+    for pattern, task_type, hint in task_patterns:
+        if re.search(pattern, message, re.IGNORECASE):
+            learn_pattern("task_type", task_type, hint)
+
+    style_patterns = [
+        (r"(?:short|concise|brief|simple)", "style_concise", "User prefers concise responses"),
+        (r"(?:detailed|explain|step.by.step|thorough)", "style_detailed", "User prefers detailed responses"),
+        (r"(?:comment|document|docstring)", "style_documented", "User wants documented code"),
+        (r"(?:no comment|without comment|minimal)", "style_minimal", "User prefers minimal comments"),
+    ]
+    for pattern, style_type, hint in style_patterns:
+        if re.search(pattern, message, re.IGNORECASE):
+            learn_pattern("response_style", style_type, hint)
+
+
+def build_training_context() -> str:
+    """Build training context from conversation history for Aurine model."""
+    parts = []
+
+    patterns = get_learned_patterns(limit=50)
+    if patterns:
+        lang_patterns = [p for p in patterns if p["pattern_type"] == "language"]
+        if lang_patterns:
+            langs = [p["pattern"] for p in lang_patterns[:5]]
+            parts.append(f"User frequently works with: {', '.join(langs)}")
+
+        task_patterns = [p for p in patterns if p["pattern_type"] == "task_type"]
+        if task_patterns:
+            tasks = [p["pattern"] for p in task_patterns[:5]]
+            parts.append(f"Common tasks: {', '.join(tasks)}")
+
+        style_patterns = [p for p in patterns if p["pattern_type"] == "response_style"]
+        if style_patterns:
+            parts.append(f"Response style preference: {style_patterns[0]['pattern']}")
+
+    facts = recall_facts(limit=20)
+    if facts:
+        parts.append("Known about user: " + "; ".join(f"{f['fact_key']}: {f['fact_value']}" for f in facts))
+
+    return "\n".join(parts) if parts else ""
+
+
 def get_device_info() -> dict:
     """Get device information."""
     return {

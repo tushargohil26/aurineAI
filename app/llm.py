@@ -1,15 +1,19 @@
 import json
 import re
+import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Generator
 
 from openai import OpenAI
 
-from .config import get_settings, AURINE_API_KEY, AURINE_API_URL, _BUILTIN_KEYS
+from .config import get_settings, reload_settings, AURINE_API_URL
 
-# Connection pool for reuse
 _client_cache: dict[str, OpenAI] = {}
+
+MODELFILE_PATH = Path(__file__).parent.parent / "Modelfile-native"
+OLLAMA_SETUP_DONE = Path(__file__).parent.parent / ".aurine_setup_done"
 
 
 def _ollama_running() -> bool:
@@ -24,6 +28,80 @@ def _ollama_running() -> bool:
             return response.status == 200
     except Exception:
         return False
+
+
+def _ollama_model_exists(model_name: str) -> bool:
+    settings = get_settings()
+    try:
+        req = urllib.request.Request(
+            f"{settings.ollama_base_url}/api/tags",
+            headers={"Content-Type": "application/json"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            models = [m.get("name", "") for m in data.get("models", [])]
+            return model_name in models or f"{model_name}:latest" in models
+    except Exception:
+        return False
+
+
+def _auto_setup_aurine_model() -> bool:
+    if OLLAMA_SETUP_DONE.exists():
+        return True
+
+    settings = get_settings()
+    model_name = settings.aurine_native_model
+
+    if _ollama_model_exists(model_name):
+        OLLAMA_SETUP_DONE.touch()
+        return True
+
+    base_model = "qwen2.5-coder:7b"
+    if not _ollama_model_exists(base_model):
+        print(f"\n  Downloading {base_model} (this may take a few minutes)...")
+        try:
+            subprocess.run(
+                ["ollama", "pull", base_model],
+                capture_output=True,
+                timeout=600,
+                check=True,
+            )
+        except FileNotFoundError:
+            print("  Ollama not found. Install from: https://ollama.com")
+            return False
+        except subprocess.TimeoutExpired:
+            print("  Download timed out. Please run: ollama pull qwen2.5-coder:7b")
+            return False
+        except subprocess.CalledProcessError:
+            print("  Failed to download model. Please run: ollama pull qwen2.5-coder:7b")
+            return False
+
+    if MODELFILE_PATH.exists():
+        print(f"  Creating Aurine model from Modelfile...")
+        try:
+            subprocess.run(
+                ["ollama", "create", model_name, "-f", str(MODELFILE_PATH)],
+                capture_output=True,
+                timeout=300,
+                check=True,
+            )
+            OLLAMA_SETUP_DONE.touch()
+            print(f"  Aurine model '{model_name}' ready!")
+            return True
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            print(f"  Could not create custom model: {e}")
+    else:
+        print(f"  Modelfile not found at {MODELFILE_PATH}, using base model directly")
+
+    OLLAMA_SETUP_DONE.touch()
+    return True
+
+
+def _ensure_ollama() -> bool:
+    if not _ollama_running():
+        return False
+    return _auto_setup_aurine_model()
 
 
 def _aurine_server_running() -> bool:
@@ -41,27 +119,20 @@ def _aurine_server_running() -> bool:
 
 def _auto_fallback_provider() -> tuple[str, str, str]:
     settings = get_settings()
-    # Priority: Google (built-in) → Groq (built-in) → OpenAI (.env) → others
-    if settings.google_api_key:
-        return "google", settings.google_chat_model, settings.google_api_key
-    if settings.groq_api_key:
-        return "groq", settings.groq_chat_model, settings.groq_api_key
-    if settings.openai_api_key:
-        return "openai", settings.chat_model, settings.openai_api_key
-    if settings.deepseek_api_key:
-        return "deepseek", settings.deepseek_chat_model, settings.deepseek_api_key
-    if settings.anthropic_api_key:
-        return "anthropic", settings.anthropic_chat_model, settings.anthropic_api_key
-    if settings.mistral_api_key:
-        return "mistral", settings.mistral_chat_model, settings.mistral_api_key
-    if settings.openrouter_api_key:
-        return "openrouter", settings.openrouter_chat_model, settings.openrouter_api_key
-    if settings.cerebras_api_key:
-        return "cerebras", settings.groq_chat_model, settings.cerebras_api_key
-    if settings.nvidia_api_key:
-        return "openai", "meta/llama-3.1-405b-instruct", settings.nvidia_api_key
-    if settings.sambanova_api_key:
-        return "openai", "Meta-Llama-3.1-405B-Instruct", settings.sambanova_api_key
+    candidates = [
+        ("google", settings.google_chat_model, settings.google_api_key),
+        ("groq", settings.groq_chat_model, settings.groq_api_key),
+        ("openai", settings.chat_model, settings.openai_api_key),
+        ("deepseek", settings.deepseek_chat_model, settings.deepseek_api_key),
+        ("anthropic", settings.anthropic_chat_model, settings.anthropic_api_key),
+        ("mistral", settings.mistral_chat_model, settings.mistral_api_key),
+        ("openrouter", settings.openrouter_chat_model, settings.openrouter_api_key),
+        ("cerebras", settings.groq_chat_model, settings.cerebras_api_key),
+        ("nvidia", "meta/llama-3.1-405b-instruct", settings.nvidia_api_key),
+    ]
+    for provider, model, key in candidates:
+        if key and len(key.strip()) > 5:
+            return provider, model, key
     return "", "", ""
 
 
@@ -79,7 +150,6 @@ def _aurine_server_post(messages: list[dict], temperature: float = 0.2,
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.aurine_api_key}",
     }
 
     if stream:
@@ -136,19 +206,15 @@ def _aurine_stream_gen(url: str, payload: dict, headers: dict) -> Generator[str,
 def _ollama_post(path: str, payload: dict) -> dict:
     settings = get_settings()
     if not _ollama_running():
-        # Try Aurine server next
         if _aurine_server_running():
             raise _AurineServerFallbackError()
-        # Then try cloud providers
-        fb_provider, fb_model, fb_key = _auto_fallback_provider()
-        if fb_provider:
-            raise _OllamaFallbackError(fb_provider, fb_model, {"provider": fb_provider, "model": fb_model, "api_key": fb_key})
         raise RuntimeError(
             "No AI backend available.\n\n"
-            "Options:\n"
-            "1. Start Ollama: ollama pull qwen2.5-coder:7b\n"
-            "2. Start Aurine server: aurine run\n"
-            "3. Add GOOGLE_API_KEY to .env (free at https://aistudio.google.com/app/apikey)"
+            "Ollama is not running. Please:\n"
+            "1. Install Ollama: https://ollama.com\n"
+            "2. Start Ollama\n"
+            "3. Restart Aurine - the model will auto-download\n\n"
+            "Or type /connect to set up a cloud provider."
         )
     request = urllib.request.Request(
         f"{settings.ollama_base_url}{path}",
@@ -157,13 +223,12 @@ def _ollama_post(path: str, payload: dict) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=120) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as exc:
         raise RuntimeError(
-            "Ollama is not running or the model is missing. Start Ollama and run:\n"
-            "ollama pull qwen2.5-coder:7b\n"
-            "ollama pull nomic-embed-text"
+            "Ollama is not running or the model is missing.\n"
+            "Start Ollama and the model will auto-download."
         ) from exc
 
 
@@ -183,14 +248,9 @@ class _AurineServerFallbackError(Exception):
 def _ollama_stream(path: str, payload: dict) -> Generator[str, None, None]:
     settings = get_settings()
     if not _ollama_running():
-        fb_provider, fb_model, fb_key = _auto_fallback_provider()
-        if fb_provider:
-            raise _OllamaFallbackError(fb_provider, fb_model, {"provider": fb_provider, "model": fb_model, "api_key": fb_key})
         raise RuntimeError(
-            "Ollama is not running and no cloud API key found.\n\n"
-            "Options:\n"
-            "1. Start Ollama: ollama pull qwen2.5-coder:7b\n"
-            "2. Set GOOGLE_API_KEY in .env (free at https://aistudio.google.com/app/apikey)"
+            "Ollama is not running.\n"
+            "Install Ollama from https://ollama.com and restart Aurine."
         )
     request = urllib.request.Request(
         f"{settings.ollama_base_url}{path}",
@@ -215,9 +275,8 @@ def _ollama_stream(path: str, payload: dict) -> Generator[str, None, None]:
                     continue
     except urllib.error.URLError as exc:
         raise RuntimeError(
-            "Ollama is not running or the model is missing. Start Ollama and run:\n"
-            "ollama pull qwen2.5-coder:7b\n"
-            "ollama pull nomic-embed-text"
+            "Ollama is not running or the model is missing.\n"
+            "Start Ollama and the model will auto-download."
         ) from exc
 
 
@@ -519,9 +578,40 @@ def chat_completion(
             )
         return _google_completion(messages, model or "gemini-2.0-flash", api_key, temperature)
 
-    if provider in {"aurine", "ollama"}:
+    if provider == "aurine":
+        reload_settings()
+        if _ensure_ollama():
+            payload = {
+                "model": _native_model_name(model),
+                "messages": messages,
+                "stream": False,
+                "options": {"temperature": temperature},
+            }
+            if json_mode:
+                payload["format"] = "json"
+            try:
+                response = _ollama_post("/api/chat", payload)
+                return response.get("message", {}).get("content", "")
+            except _AurineServerFallbackError:
+                return _aurine_server_post(messages, temperature, stream=False, json_mode=json_mode).get("content", "")
+            except Exception:
+                pass
+
+        if _aurine_server_running():
+            return _aurine_server_post(messages, temperature, stream=False, json_mode=json_mode).get("content", "")
+
+        raise RuntimeError(
+            "Aurine AI is starting up...\n\n"
+            "First time setup is automatic. Just ensure:\n"
+            "1. Ollama is installed: https://ollama.com\n"
+            "2. Ollama is running\n"
+            "3. Restart Aurine\n\n"
+            "The AI model will auto-download on first run (~4GB)."
+        )
+
+    if provider == "ollama":
         payload = {
-            "model": _native_model_name(model) if provider == "aurine" else (model or "qwen2.5-coder:7b"),
+            "model": model or "qwen2.5-coder:7b",
             "messages": messages,
             "stream": False,
             "options": {"temperature": temperature},
@@ -531,20 +621,6 @@ def chat_completion(
         try:
             response = _ollama_post("/api/chat", payload)
             return response.get("message", {}).get("content", "")
-        except _AurineServerFallbackError:
-            # Try Aurine server
-            try:
-                result = _aurine_server_post(messages, temperature, stream=False, json_mode=json_mode)
-                return result.get("content", "")
-            except Exception:
-                pass
-            # Fall through to cloud
-            fb_provider, fb_model, fb_key = _auto_fallback_provider()
-            if fb_provider:
-                return chat_completion(
-                    messages=messages, temperature=temperature,
-                    json_mode=json_mode, model_config={"provider": fb_provider, "model": fb_model, "api_key": fb_key}
-                )
         except _OllamaFallbackError as fb:
             return chat_completion(
                 messages=messages, temperature=temperature,
@@ -603,9 +679,40 @@ def chat_completion_stream(
         yield from _google_stream(messages, model or "gemini-2.0-flash", api_key, temperature)
         return
 
-    if provider in {"aurine", "ollama"}:
+    if provider == "aurine":
+        reload_settings()
+        if _ensure_ollama():
+            payload = {
+                "model": _native_model_name(model),
+                "messages": messages,
+                "stream": True,
+                "options": {"temperature": temperature},
+            }
+            try:
+                yield from _ollama_stream("/api/chat", payload)
+                return
+            except _AurineServerFallbackError:
+                yield from _aurine_server_stream(messages, temperature)
+                return
+            except Exception:
+                pass
+
+        if _aurine_server_running():
+            yield from _aurine_server_stream(messages, temperature)
+            return
+
+        raise RuntimeError(
+            "Aurine AI is starting up...\n\n"
+            "First time setup is automatic. Just ensure:\n"
+            "1. Ollama is installed: https://ollama.com\n"
+            "2. Ollama is running\n"
+            "3. Restart Aurine\n\n"
+            "The AI model will auto-download on first run (~4GB)."
+        )
+
+    if provider == "ollama":
         payload = {
-            "model": _native_model_name(model) if provider == "aurine" else (model or "qwen2.5-coder:7b"),
+            "model": model or "qwen2.5-coder:7b",
             "messages": messages,
             "stream": True,
             "options": {"temperature": temperature},
@@ -613,21 +720,6 @@ def chat_completion_stream(
         try:
             yield from _ollama_stream("/api/chat", payload)
             return
-        except _AurineServerFallbackError:
-            # Try Aurine server stream
-            try:
-                yield from _aurine_server_post(messages, temperature, stream=True)
-                return
-            except Exception:
-                pass
-            # Fall through to cloud
-            fb_provider, fb_model, fb_key = _auto_fallback_provider()
-            if fb_provider:
-                yield from chat_completion_stream(
-                    messages=messages, temperature=temperature,
-                    model_config={"provider": fb_provider, "model": fb_model, "api_key": fb_key}
-                )
-                return
         except _OllamaFallbackError as fb:
             yield from chat_completion_stream(
                 messages=messages, temperature=temperature, model_config=fb.config
@@ -635,6 +727,12 @@ def chat_completion_stream(
             return
 
     raise RuntimeError(f"AI provider '{provider}' is not supported. Use aurine, ollama, openai, anthropic, google, groq, or custom.")
+
+
+def _aurine_server_stream(messages: list[dict], temperature: float) -> Generator[str, None, None]:
+    result = _aurine_server_post(messages, temperature, stream=True)
+    if isinstance(result, Generator):
+        yield from result
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
@@ -668,8 +766,8 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not _ollama_running():
         raise RuntimeError(
             "Embeddings require Ollama or an OpenAI-compatible API key.\n"
-            "1. Start Ollama: ollama pull nomic-embed-text\n"
-            "2. Or set OPENAI_API_KEY in .env"
+            "1. Install Ollama: https://ollama.com\n"
+            "2. Start Ollama (nomic-embed-text will auto-download)"
         )
 
     embeddings = []
@@ -833,8 +931,59 @@ def chat_with_tools(
                     "content": [{"type": "tool_result", "tool_use_id": tc["id"], "content": result[:8000]}],
                 })
 
-        elif provider in {"aurine", "ollama"}:
-            ollama_model = _native_model_name(model) if provider == "aurine" else (model or "qwen2.5-coder:7b")
+        elif provider == "aurine":
+            if not _ensure_ollama():
+                if _aurine_server_running():
+                    answer = chat_completion(messages=current_messages, temperature=temperature, model_config=model_config)
+                    return {"answer": answer, "tool_calls": all_tool_calls}
+                raise RuntimeError("Aurine requires Ollama. Install from https://ollama.com")
+
+            ollama_model = _native_model_name(model)
+            payload = {
+                "model": ollama_model,
+                "messages": current_messages,
+                "stream": False,
+                "options": {"temperature": temperature},
+            }
+            if tools:
+                ollama_tools = []
+                for t in tools:
+                    ollama_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": t["function"]["name"],
+                            "description": t["function"]["description"],
+                            "parameters": t["function"]["parameters"],
+                        },
+                    })
+                payload["tools"] = ollama_tools
+            try:
+                response = _ollama_post("/api/chat", payload)
+            except _AurineServerFallbackError:
+                answer = chat_completion(messages=current_messages, temperature=temperature, model_config=model_config)
+                return {"answer": answer, "tool_calls": all_tool_calls}
+            message = response.get("message", {})
+            text_content = message.get("content", "")
+            ollama_calls = message.get("tool_calls", [])
+
+            if not ollama_calls:
+                return {"answer": text_content, "tool_calls": all_tool_calls}
+
+            current_messages.append({"role": "assistant", "content": text_content or None, "tool_calls": ollama_calls})
+
+            for tc in ollama_calls:
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                try:
+                    args = json.loads(fn.get("arguments", "{}")) if isinstance(fn.get("arguments"), str) else fn.get("arguments", {})
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                result = tool_executor(name, args)
+                all_tool_calls.append({"name": name, "arguments": args, "result": result[:2000]})
+                current_messages.append({"role": "tool", "content": result[:8000]})
+
+        elif provider == "ollama":
+            ollama_model = model or "qwen2.5-coder:7b"
             payload = {
                 "model": ollama_model,
                 "messages": current_messages,

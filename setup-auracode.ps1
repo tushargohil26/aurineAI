@@ -38,24 +38,39 @@ foreach ($f in $files) {
 # === CREATE .ENV IF MISSING ===
 $envFile = Join-Path $ProjectDir ".env"
 if (-not (Test-Path $envFile)) {
-    $envExample = Join-Path $ProjectDir ".env.example"
-    if (Test-Path $envExample) {
-        Copy-Item $envExample $envFile
-        Write-Host "  [ok] Created .env" -ForegroundColor Green
-    } else {
-        Set-Content -Path $envFile -Value "AI_PROVIDER=aurine`nGOOGLE_API_KEY=`nOPENAI_API_KEY="
-    }
+    # Always create fresh .env - NEVER copy from source (may contain developer's personal keys)
+    @"
+AI_PROVIDER=aurine
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+AURINE_NATIVE_MODEL=aurine-coder
+AURINE_EMBEDDING_MODEL=nomic-embed-text
+OLLAMA_CHAT_MODEL=qwen2.5-coder:7b
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+OPENAI_CHAT_MODEL=gpt-4o-mini
+GOOGLE_CHAT_MODEL=gemini-2.0-flash
+GROQ_CHAT_MODEL=llama-3.3-70b-versatile
+VECTOR_DB=$ProjectDir\vector_store.sqlite3
+DATA_DIR=$ProjectDir\data
+"@ | Set-Content $envFile -NoNewline
+    Write-Host "  [ok] Created fresh .env (Aurine works without API keys)" -ForegroundColor Green
 }
 
 # === ENSURE VENV + DEPS ===
-Write-Host "  Installing dependencies..." -ForegroundColor DarkGray
+Write-Host "  Checking dependencies..." -ForegroundColor DarkGray
 Push-Location $ProjectDir
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
     python -m venv .venv 2>$null
 }
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -q 2>$null
+# Only install if marker file missing (fast startup)
+if (-not (Test-Path ".venv\.deps_installed")) {
+    Write-Host "  Installing packages (first run only)..." -ForegroundColor DarkGray
+    .\.venv\Scripts\python.exe -m pip install -r requirements.txt -q 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Set-Content -Path ".venv\.deps_installed" -Value "ok"
+    }
+}
 Pop-Location
-Write-Host "  [ok] Dependencies installed" -ForegroundColor Green
+Write-Host "  [ok] Dependencies ready" -ForegroundColor Green
 
 # === CREATE DEVICE DATA DIR ===
 $dataDir = "$env:USERPROFILE\.aurine-data"
@@ -85,11 +100,12 @@ try {
 } catch {}
 
 if ($hasCloudKey -or $ollamaRunning) {
-    Write-Host "  [ok] AI: ready (cloud or local)" -ForegroundColor Green
+    Write-Host "  [ok] AI: ready (local or cloud)" -ForegroundColor Green
 } else {
-    Write-Host "  [!] AI: no backend found" -ForegroundColor Yellow
-    Write-Host "      AuraCode will use built-in defaults." -ForegroundColor DarkGray
-    Write-Host "      For best results, add GOOGLE_API_KEY to .env" -ForegroundColor DarkGray
+    Write-Host "  [!] Ollama not running" -ForegroundColor Yellow
+    Write-Host "      Install Ollama: https://ollama.com" -ForegroundColor White
+    Write-Host "      Aurine AI runs locally - no API key needed!" -ForegroundColor DarkGray
+    Write-Host "      Or type 'auracode' then /connect for cloud providers" -ForegroundColor DarkGray
 }
 
 # === ADD TO PATH ===

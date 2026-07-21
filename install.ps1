@@ -159,29 +159,22 @@ if ($savedEnv) {
     $savedEnv | Set-Content "$InstallDir\.env" -NoNewline
     Write-Host "  [OK] Restored existing .env (kept your API keys)" -ForegroundColor Green
 } elseif (-not (Test-Path "$InstallDir\.env")) {
-    # Try to copy from source repo
-    $srcEnv = Join-Path $srcDir ".env"
-    if (Test-Path $srcEnv) {
-        Copy-Item $srcEnv "$InstallDir\.env" -Force
-    } else {
-        @"
+    # NEVER copy .env from source repo (may contain developer's personal keys)
+    # Always create a fresh .env for the new device
+    @"
 AI_PROVIDER=aurine
-GOOGLE_API_KEY=
-OPENAI_API_KEY=
-GROQ_API_KEY=
-OPENROUTER_API_KEY=
-DEEPSEEK_API_KEY=
-ANTHROPIC_API_KEY=
-OPENAI_CHAT_MODEL=gpt-4o-mini
-GOOGLE_CHAT_MODEL=gemini-2.0-flash
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+AURINE_NATIVE_MODEL=aurine-coder
+AURINE_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_CHAT_MODEL=qwen2.5-coder:7b
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+OPENAI_CHAT_MODEL=gpt-4o-mini
+GOOGLE_CHAT_MODEL=gemini-2.0-flash
+GROQ_CHAT_MODEL=llama-3.3-70b-versatile
 VECTOR_DB=$InstallDir\vector_store.sqlite3
 DATA_DIR=$InstallDir\data
 "@ | Set-Content "$InstallDir\.env" -NoNewline
-    }
-    Write-Host "  [OK] Created .env" -ForegroundColor Green
+    Write-Host "  [OK] Created fresh .env (Aurine works without API keys)" -ForegroundColor Green
 }
 
 # Cleanup
@@ -208,7 +201,7 @@ if (-not (Test-Path "$venvDir\pyvenv.cfg")) {
 Start-Process -FilePath "$venvPy" -ArgumentList "-m pip install --upgrade pip" -Wait -NoNewWindow -ErrorAction SilentlyContinue
 
 # Install packages one by one (NEVER crash)
-$packages = @("rich", "questionary", "openai", "httpx", "pydantic", "python-dotenv", "pygments")
+$packages = @("rich", "questionary", "openai", "httpx", "pydantic", "python-dotenv", "pygments", "fastapi", "uvicorn", "pypdf", "tiktoken", "numpy", "scikit-learn", "aiohttp", "bcrypt", "slowapi", "websockets", "python-multipart", "jinja2")
 $ok = 0
 $fail = 0
 foreach ($pkg in $packages) {
@@ -231,6 +224,11 @@ foreach ($pkg in $packages) {
 }
 Write-Host "  Packages: $ok/$($packages.Count)" -ForegroundColor $(if ($fail -eq 0) { "Green" } else { "Yellow" })
 
+# Mark deps as installed for fast startup
+if ($ok -gt 0) {
+    Set-Content -Path "$venvDir\.deps_installed" -Value "ok" -Force
+}
+
 # ====================================================================
 # STEP 5: Create global command
 # ====================================================================
@@ -249,7 +247,11 @@ if not exist ".venv\Scripts\python.exe" (
     pause
     exit /b 1
 )
-".venv\Scripts\python.exe" -m pip install -r requirements.txt -q 2>nul
+if not exist ".venv\.deps_installed" (
+    ".venv\Scripts\python.exe" -m pip install -r requirements.txt -q 2>nul
+    if not errorlevel 1 echo. > ".venv\.deps_installed"
+)
+if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
 ".venv\Scripts\python.exe" auracode.py %*
 "@
 $batContent | Set-Content "$BinDir\auracode.bat" -NoNewline -Encoding ASCII
@@ -274,6 +276,9 @@ Write-Host "  ============================================" -ForegroundColor Gre
 Write-Host ""
 Write-Host "    auracode" -ForegroundColor White -BackgroundColor DarkGreen
 Write-Host ""
-Write-Host "  First run: AuraCode will auto-setup AI if needed" -ForegroundColor DarkGray
+Write-Host "  Aurine AI works locally - no API key needed!" -ForegroundColor Green
+Write-Host "  Just install Ollama: https://ollama.com" -ForegroundColor Yellow
+Write-Host "  The AI model auto-downloads on first run (~4GB)" -ForegroundColor Yellow
+Write-Host "  Or type /connect to use a cloud provider instead" -ForegroundColor DarkGray
 Write-Host "  Commands: Ctrl+P (palette) | /connect | /help" -ForegroundColor DarkGray
 Write-Host ""

@@ -1,4 +1,3 @@
-from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -8,81 +7,7 @@ import os
 
 load_dotenv()
 
-# ============================================================================
-# BUILT-IN API KEYS - Ships with code, works on ANY device without .env
-# Priority: .env key > built-in key > error
-# ============================================================================
-
-# Aurine server (self-hosted)
-AURINE_API_KEY = "aurine_sk_WPyiBjC9OP-0bp-l1EJj-1l6J-wKdXIfWUozyFQtL8c"
 AURINE_API_URL = "http://localhost:8000"
-
-# Free cloud providers (built-in)
-_BUILTIN_KEYS = {
-    "google": {
-        "key": "AIzaSyDummyReplaceWithRealKey",
-        "model": "gemini-2.0-flash",
-        "url": "",
-        "free": True,
-    },
-    "groq": {
-        "key": "",
-        "model": "llama-3.3-70b-versatile",
-        "url": "",
-        "free": True,
-    },
-    "deepseek": {
-        "key": "",
-        "model": "deepseek-chat",
-        "url": "",
-        "free": False,
-    },
-    "openrouter": {
-        "key": "",
-        "model": "meta-llama/llama-3.1-405b-instruct",
-        "url": "",
-        "free": True,
-    },
-    "sambanova": {
-        "key": "",
-        "model": "Meta-Llama-3.1-405B-Instruct",
-        "url": "https://api.sambanova.ai/v1",
-        "free": True,
-    },
-    "cerebras": {
-        "key": "",
-        "model": "llama-3.3-70b",
-        "url": "",
-        "free": True,
-    },
-    "nvidia": {
-        "key": "",
-        "model": "meta/llama-3.1-405b-instruct",
-        "url": "https://integrate.api.nvidia.com/v1",
-        "free": True,
-    },
-}
-
-
-def _resolve_key(env_var: str, builtin_provider: str) -> str:
-    env_val = os.getenv(env_var, "").strip()
-    if env_val:
-        return env_val
-    return _BUILTIN_KEYS.get(builtin_provider, {}).get("key", "")
-
-
-def _resolve_model(env_var: str, builtin_provider: str, default: str) -> str:
-    env_val = os.getenv(env_var, "").strip()
-    if env_val:
-        return env_val
-    return _BUILTIN_KEYS.get(builtin_provider, {}).get("model", default)
-
-
-def _resolve_url(env_var: str, builtin_provider: str, default: str = "") -> str:
-    env_val = os.getenv(env_var, "").strip()
-    if env_val:
-        return env_val
-    return _BUILTIN_KEYS.get(builtin_provider, {}).get("url", default)
 
 
 class Settings(BaseModel):
@@ -98,7 +23,6 @@ class Settings(BaseModel):
     nvidia_api_key: str = ""
     cerebras_api_key: str = ""
     sambanova_api_key: str = ""
-    aurine_api_key: str = AURINE_API_KEY
     aurine_api_url: str = AURINE_API_URL
     aurine_native_model: str = "aurine-coder"
     aurine_embedding_model: str = "nomic-embed-text"
@@ -107,7 +31,7 @@ class Settings(BaseModel):
     google_chat_model: str = "gemini-2.0-flash"
     mistral_chat_model: str = "mistral-large-latest"
     groq_chat_model: str = "llama-3.3-70b-versatile"
-    openrouter_chat_model: str = "anthropic/claude-sonnet-4"
+    openrouter_chat_model: str = "meta-llama/llama-3.1-405b-instruct"
     deepseek_chat_model: str = "deepseek-chat"
     embedding_model: str = "text-embedding-3-small"
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -133,32 +57,48 @@ class Settings(BaseModel):
     chain_of_thought: bool = True
 
 
-@lru_cache
+_settings_cache: Settings | None = None
+
+
 def get_settings() -> Settings:
+    global _settings_cache
+    if _settings_cache is not None:
+        return _settings_cache
+    _settings_cache = _build_settings()
+    return _settings_cache
+
+
+def reload_settings() -> Settings:
+    global _settings_cache
+    load_dotenv(override=True)
+    _settings_cache = _build_settings()
+    return _settings_cache
+
+
+def _build_settings() -> Settings:
     return Settings(
         ai_provider=os.getenv("AI_PROVIDER", "aurine").strip().lower(),
-        openai_api_key=_resolve_key("OPENAI_API_KEY", "openai"),
+        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip(),
-        google_api_key=_resolve_key("GOOGLE_API_KEY", "google"),
+        google_api_key=os.getenv("GOOGLE_API_KEY", "").strip(),
         mistral_api_key=os.getenv("MISTRAL_API_KEY", "").strip(),
-        groq_api_key=_resolve_key("GROQ_API_KEY", "groq"),
-        openrouter_api_key=_resolve_key("OPENROUTER_API_KEY", "openrouter"),
-        deepseek_api_key=_resolve_key("DEEPSEEK_API_KEY", "deepseek"),
+        groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
+        deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", "").strip(),
         fireworks_api_key=os.getenv("FIREWORKS_API_KEY", "").strip(),
-        nvidia_api_key=_resolve_key("NVIDIA_API_KEY", "nvidia"),
-        cerebras_api_key=_resolve_key("CEREBRAS_API_KEY", "cerebras"),
-        sambanova_api_key=_resolve_key("SAMBANOVA_API_KEY", "sambanova"),
-        aurine_api_key=os.getenv("AURINE_API_KEY", AURINE_API_KEY).strip(),
+        nvidia_api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
+        cerebras_api_key=os.getenv("CEREBRAS_API_KEY", "").strip(),
+        sambanova_api_key=os.getenv("SAMBANOVA_API_KEY", "").strip(),
         aurine_api_url=os.getenv("AURINE_API_URL", AURINE_API_URL).strip(),
-        aurine_native_model=os.getenv("AURINE_NATIVE_MODEL", "qwen2.5-coder:7b"),
+        aurine_native_model=os.getenv("AURINE_NATIVE_MODEL", "aurine-coder"),
         aurine_embedding_model=os.getenv("AURINE_EMBEDDING_MODEL", "nomic-embed-text"),
         chat_model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
         anthropic_chat_model=os.getenv("ANTHROPIC_CHAT_MODEL", "claude-sonnet-4-20250514"),
-        google_chat_model=_resolve_model("GOOGLE_CHAT_MODEL", "google", "gemini-2.0-flash"),
+        google_chat_model=os.getenv("GOOGLE_CHAT_MODEL", "gemini-2.0-flash"),
         mistral_chat_model=os.getenv("MISTRAL_CHAT_MODEL", "mistral-large-latest"),
-        groq_chat_model=_resolve_model("GROQ_CHAT_MODEL", "groq", "llama-3.3-70b-versatile"),
-        openrouter_chat_model=_resolve_model("OPENROUTER_CHAT_MODEL", "openrouter", "meta-llama/llama-3.1-405b-instruct"),
-        deepseek_chat_model=_resolve_model("DEEPSEEK_CHAT_MODEL", "deepseek", "deepseek-chat"),
+        groq_chat_model=os.getenv("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile"),
+        openrouter_chat_model=os.getenv("OPENROUTER_CHAT_MODEL", "meta-llama/llama-3.1-405b-instruct"),
+        deepseek_chat_model=os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat"),
         embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/"),
         ollama_chat_model=os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5-coder:7b"),

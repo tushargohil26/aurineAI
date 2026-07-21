@@ -78,18 +78,14 @@ done
 # Create .env if not present
 if [ ! -f "$INSTALL_DIR/.env" ]; then
     cat > "$INSTALL_DIR/.env" << 'ENVEOF'
-AI_PROVIDER=google
-GOOGLE_API_KEY=AIzaSyDummyReplaceWithRealKey
-OPENAI_API_KEY=
-GROQ_API_KEY=
-OPENROUTER_API_KEY=
-DEEPSEEK_API_KEY=
-ANTHROPIC_API_KEY=
-OPENAI_CHAT_MODEL=gpt-4o-mini
-GOOGLE_CHAT_MODEL=gemini-2.0-flash
+AI_PROVIDER=aurine
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+AURINE_NATIVE_MODEL=aurine-coder
+AURINE_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_CHAT_MODEL=qwen2.5-coder:7b
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+OPENAI_CHAT_MODEL=gpt-4o-mini
+GOOGLE_CHAT_MODEL=gemini-2.0-flash
 ENVEOF
 fi
 

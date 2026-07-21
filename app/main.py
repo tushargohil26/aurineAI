@@ -35,7 +35,7 @@ from .codegen import (
     run_project_command,
     write_project_file,
 )
-from .config import get_settings
+from .config import get_settings, reload_settings
 from .llm import chat_completion, chat_completion_stream, chat_with_tools, supports_tools
 from .memory import memory_store
 from .device import get_device_id, get_user_id
@@ -551,7 +551,7 @@ def installed_ollama_models() -> list[str]:
 
 @app.get("/aurine/status")
 def aurine_status() -> dict:
-    settings = get_settings()
+    settings = reload_settings()
     installed = installed_ollama_models()
     builtin = ["aurine-native", "aurine-coder", "aurine", settings.aurine_native_model, settings.ollama_chat_model]
 
@@ -625,7 +625,7 @@ def aurine_agent_detail(agent_id: str) -> dict:
 
 @app.get("/aurine/providers")
 def aurine_providers() -> dict:
-    settings = get_settings()
+    settings = reload_settings()
     providers = [
         {"id": "aurine", "name": "Aurine Native (Local)", "requires_key": False, "models": ["aurine-coder", "aurine-native"]},
         {"id": "ollama", "name": "Ollama (Local)", "requires_key": False, "models": installed_ollama_models()},
