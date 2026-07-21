@@ -40,19 +40,17 @@ $envFile = Join-Path $ProjectDir ".env"
 if (-not (Test-Path $envFile)) {
     # Always create fresh .env - NEVER copy from source (may contain developer's personal keys)
     @"
-AI_PROVIDER=aurine
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-AURINE_NATIVE_MODEL=aurine-coder
-AURINE_EMBEDDING_MODEL=nomic-embed-text
-OLLAMA_CHAT_MODEL=qwen2.5-coder:7b
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-OPENAI_CHAT_MODEL=gpt-4o-mini
+AI_PROVIDER=google
+GOOGLE_API_KEY=
 GOOGLE_CHAT_MODEL=gemini-2.0-flash
-GROQ_CHAT_MODEL=llama-3.3-70b-versatile
+OPENAI_API_KEY=
+OPENAI_CHAT_MODEL=gpt-4o-mini
+GROQ_API_KEY=
+DEEPSEEK_API_KEY=
 VECTOR_DB=$ProjectDir\vector_store.sqlite3
 DATA_DIR=$ProjectDir\data
 "@ | Set-Content $envFile -NoNewline
-    Write-Host "  [ok] Created fresh .env (Aurine works without API keys)" -ForegroundColor Green
+    Write-Host "  [ok] Created fresh .env (add GOOGLE_API_KEY for free AI)" -ForegroundColor Green
 }
 
 # === ENSURE VENV + DEPS ===
@@ -92,20 +90,12 @@ if ($envContent) {
     }
 }
 
-$ollamaRunning = $false
-try {
-    $null = Invoke-WebRequest -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 3 -ErrorAction Stop
-    $ollamaRunning = $true
-    Write-Host "  [ok] Ollama: running locally" -ForegroundColor Green
-} catch {}
-
-if ($hasCloudKey -or $ollamaRunning) {
-    Write-Host "  [ok] AI: ready (local or cloud)" -ForegroundColor Green
+if ($hasCloudKey) {
+    Write-Host "  [ok] AI: ready (cloud)" -ForegroundColor Green
 } else {
-    Write-Host "  [!] Ollama not running" -ForegroundColor Yellow
-    Write-Host "      Install Ollama: https://ollama.com" -ForegroundColor White
-    Write-Host "      Aurine AI runs locally - no API key needed!" -ForegroundColor DarkGray
-    Write-Host "      Or type 'auracode' then /connect for cloud providers" -ForegroundColor DarkGray
+    Write-Host "  [!] No API key configured" -ForegroundColor Yellow
+    Write-Host "      Get free key: https://aistudio.google.com/app/apikey" -ForegroundColor White
+    Write-Host "      Add to .env: GOOGLE_API_KEY=your_key" -ForegroundColor DarkGray
 }
 
 # === ADD TO PATH ===
@@ -132,15 +122,10 @@ foreach ($tool in $tools) {
 Write-Host ""
 Write-Host "  Done! Type 'auracode' in any terminal to start." -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  AuraCode v2.0 Features:" -ForegroundColor Cyan
-Write-Host "    Ctrl+P     - Command Palette (fuzzy search all commands)" -ForegroundColor White
-Write-Host "    /connect   - Connect AI provider (set API keys)" -ForegroundColor White
+Write-Host "  Features:" -ForegroundColor Cyan
+Write-Host "    Ctrl+P     - Command Palette" -ForegroundColor White
+Write-Host "    /connect   - Connect AI provider" -ForegroundColor White
 Write-Host "    /agents    - Switch AI agent" -ForegroundColor White
-Write-Host "    /model     - Switch AI model" -ForegroundColor White
 Write-Host "    /session   - Switch session" -ForegroundColor White
-Write-Host "    /new       - New session" -ForegroundColor White
 Write-Host "    /help      - Show all commands" -ForegroundColor White
-Write-Host ""
-Write-Host "  Auto-updates from GitHub on every launch." -ForegroundColor DarkGray
-Write-Host "  Each device has its own data in: $dataDir" -ForegroundColor DarkGray
 Write-Host ""

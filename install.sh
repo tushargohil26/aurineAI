@@ -1,13 +1,6 @@
 #!/bin/bash
-# AuraCode v2.0 - One-Line Installer
+# AuraCode v2.2 - One-Line Installer
 # Run: curl -fsSL https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.sh | bash
-#
-# What this does:
-#   1. Downloads AuraCode from GitHub
-#   2. Sets up Python venv with all dependencies
-#   3. Creates global 'auracode' command
-#   4. No Ollama needed - uses free cloud AI
-#   5. Auto-updates on every launch
 
 set -e
 INSTALL_DIR="$HOME/.aurine"
@@ -16,8 +9,8 @@ REPO_URL="https://github.com/tushargohil26/aurineAI"
 
 echo ""
 echo "  ============================================"
-echo "    AuraCode v2.0 - AI Terminal Agent"
-echo "    OpenCode-style | Free Cloud AI | Auto-update"
+echo "    AuraCode v2.2 - AI Terminal Agent"
+echo "    No Ollama | Free Google AI"
 echo "  ============================================"
 echo ""
 
@@ -78,14 +71,13 @@ done
 # Create .env if not present
 if [ ! -f "$INSTALL_DIR/.env" ]; then
     cat > "$INSTALL_DIR/.env" << 'ENVEOF'
-AI_PROVIDER=aurine
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-AURINE_NATIVE_MODEL=aurine-coder
-AURINE_EMBEDDING_MODEL=nomic-embed-text
-OLLAMA_CHAT_MODEL=qwen2.5-coder:7b
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-OPENAI_CHAT_MODEL=gpt-4o-mini
+AI_PROVIDER=google
+GOOGLE_API_KEY=
 GOOGLE_CHAT_MODEL=gemini-2.0-flash
+OPENAI_API_KEY=
+OPENAI_CHAT_MODEL=gpt-4o-mini
+GROQ_API_KEY=
+DEEPSEEK_API_KEY=
 ENVEOF
 fi
 
@@ -167,27 +159,18 @@ fi
 # =========================================================================
 echo ""
 echo "  ============================================"
-echo "    AuraCode v2.0 Installed!"
+echo "    AuraCode v2.2 Installed!"
 echo "  ============================================"
 echo ""
-echo "  How to use:"
-echo "    1. Open a NEW terminal (important!)"
-echo "    2. Type:"
+echo "  Setup:"
+echo "    1. Get free API key: https://aistudio.google.com/app/apikey"
+echo "    2. Edit: $INSTALL_DIR/.env"
+echo "    3. Add: GOOGLE_API_KEY=your_key"
 echo ""
-echo "      auracode"
+echo "  Usage:"
+echo "    Open NEW terminal and type: auracode"
 echo ""
-echo "  Features (OpenCode-style):"
-echo "    Ctrl+P     Command Palette (fuzzy search)"
-echo "    /connect   Connect AI provider (set API key)"
-echo "    /agents    Switch AI agent"
-echo "    /model     Switch AI model"
-echo "    /session   Switch session"
-echo "    /new       New session"
-echo "    /help      Show all commands"
-echo ""
-echo "  Free AI (no setup needed):"
-echo "    Google Gemini, Groq, DeepSeek, OpenRouter"
-echo "    Or use /connect to add your own API keys"
-echo ""
-echo "  Files: $INSTALL_DIR"
+echo "  Commands:"
+echo "    Ctrl+P   Command Palette"
+echo "    /help    Show all commands"
 echo ""

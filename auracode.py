@@ -1696,20 +1696,9 @@ def _run_turn(inp, chat_id):
 # ============================================================================
 
 def _check_ai_ready():
-    """Check if Aurine local AI or any cloud provider is available."""
+    """Check if any cloud provider API key is available."""
     from dotenv import load_dotenv
     load_dotenv(override=True)
-
-    provider = os.getenv("AI_PROVIDER", "aurine").strip().lower()
-    if provider == "aurine":
-        try:
-            import urllib.request
-            req = urllib.request.Request("http://127.0.0.1:11434/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=2) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
 
     for key in ["GOOGLE_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY",
                 "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "SAMBANOVA_API_KEY",
@@ -1718,13 +1707,7 @@ def _check_ai_ready():
         if val and len(val) > 5:
             return True
 
-    try:
-        import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:11434/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as r:
-            if r.status == 200:
-                return True
-    except Exception:
+    return False
         pass
     return False
 
@@ -1840,20 +1823,12 @@ def main():
 
     # Auto-setup: check if any AI provider is configured
     if not _check_ai_ready():
-        provider = os.getenv("AI_PROVIDER", "aurine").strip().lower()
-        if provider in ("aurine", "ollama"):
-            console.print("[yellow]Ollama is not running![/]")
-            console.print("[dim]Aurine AI needs Ollama to work locally.[/]\n")
-            console.print("[cyan]Quick setup:[/]")
-            console.print("[dim]  1. Install Ollama: https://ollama.com[/]")
-            console.print("[dim]  2. Start Ollama[/]")
-            console.print("[dim]  3. Restart this program[/]")
-            console.print("[dim]  The AI model will auto-download on first run (~4GB)[/]\n")
-            console.print("[dim]Or type /connect to use a cloud provider instead.[/]\n")
-        else:
-            console.print("[yellow]No AI provider configured yet![/]")
-            console.print("[dim]Let's set one up (takes 30 seconds)[/]\n")
-            _auto_setup_wizard()
+        console.print("[yellow]No AI provider configured![/]")
+        console.print("[dim]Set GOOGLE_API_KEY or OPENAI_API_KEY in .env[/]\n")
+        console.print("[cyan]Quick setup:[/]")
+        console.print("[dim]  1. Get free key: https://aistudio.google.com/app/apikey[/]")
+        console.print("[dim]  2. Add to .env: GOOGLE_API_KEY=your_key[/]")
+        console.print("[dim]  3. Restart AuraCode[/]\n")
 
     while True:
         try:

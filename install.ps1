@@ -1,4 +1,4 @@
-# AuraCode v2.1 - Universal Installer (v2.1.0 - cache bust)
+# AuraCode v2.2 - Universal Installer
 # Run on ANY Windows device: irm https://raw.githubusercontent.com/tushargohil26/aurineAI/main/install.ps1 | iex
 
 $InstallDir = "$env:USERPROFILE\.aurine"
@@ -7,8 +7,8 @@ $RepoUrl = "https://github.com/tushargohil26/aurineAI"
 
 Write-Host ""
 Write-Host "  ============================================" -ForegroundColor Cyan
-Write-Host "    AuraCode v2.0 - AI Terminal Agent" -ForegroundColor Cyan
-Write-Host "    Works on ANY device | No Ollama needed" -ForegroundColor DarkGray
+Write-Host "    AuraCode v2.2 - AI Terminal Agent" -ForegroundColor Cyan
+Write-Host "    No Ollama needed | Free Google AI" -ForegroundColor DarkGray
 Write-Host "  ============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -162,19 +162,17 @@ if ($savedEnv) {
     # NEVER copy .env from source repo (may contain developer's personal keys)
     # Always create a fresh .env for the new device
     @"
-AI_PROVIDER=aurine
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-AURINE_NATIVE_MODEL=aurine-coder
-AURINE_EMBEDDING_MODEL=nomic-embed-text
-OLLAMA_CHAT_MODEL=qwen2.5-coder:7b
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-OPENAI_CHAT_MODEL=gpt-4o-mini
+AI_PROVIDER=google
+GOOGLE_API_KEY=
 GOOGLE_CHAT_MODEL=gemini-2.0-flash
-GROQ_CHAT_MODEL=llama-3.3-70b-versatile
+OPENAI_API_KEY=
+OPENAI_CHAT_MODEL=gpt-4o-mini
+GROQ_API_KEY=
+DEEPSEEK_API_KEY=
 VECTOR_DB=$InstallDir\vector_store.sqlite3
 DATA_DIR=$InstallDir\data
 "@ | Set-Content "$InstallDir\.env" -NoNewline
-    Write-Host "  [OK] Created fresh .env (Aurine works without API keys)" -ForegroundColor Green
+    Write-Host "  [OK] Created fresh .env (add GOOGLE_API_KEY for free AI)" -ForegroundColor Green
 }
 
 # Cleanup
@@ -276,9 +274,7 @@ Write-Host "  ============================================" -ForegroundColor Gre
 Write-Host ""
 Write-Host "    auracode" -ForegroundColor White -BackgroundColor DarkGreen
 Write-Host ""
-Write-Host "  Aurine AI works locally - no API key needed!" -ForegroundColor Green
-Write-Host "  Just install Ollama: https://ollama.com" -ForegroundColor Yellow
-Write-Host "  The AI model auto-downloads on first run (~4GB)" -ForegroundColor Yellow
-Write-Host "  Or type /connect to use a cloud provider instead" -ForegroundColor DarkGray
-Write-Host "  Commands: Ctrl+P (palette) | /connect | /help" -ForegroundColor DarkGray
+Write-Host "  Setup: Add GOOGLE_API_KEY to .env for free AI" -ForegroundColor Yellow
+Write-Host "  Get key: https://aistudio.google.com/app/apikey" -ForegroundColor Yellow
+Write-Host "  Commands: Ctrl+P (palette) | /help" -ForegroundColor DarkGray
 Write-Host ""
