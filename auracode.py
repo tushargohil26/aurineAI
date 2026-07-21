@@ -111,11 +111,6 @@ PROVIDERS = [
     {"id": "openai", "name": "OpenAI", "key_env": "OPENAI_API_KEY", "model_env": "OPENAI_CHAT_MODEL", "default_model": "gpt-4o-mini", "url": "https://platform.openai.com/api-keys", "free": False, "icon": "O", "color": "bright_green"},
     {"id": "anthropic", "name": "Anthropic", "key_env": "ANTHROPIC_API_KEY", "model_env": "ANTHROPIC_CHAT_MODEL", "default_model": "claude-sonnet-4-20250514", "url": "https://console.anthropic.com/", "free": False, "icon": "A", "color": "yellow"},
     {"id": "deepseek", "name": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "model_env": "DEEPSEEK_CHAT_MODEL", "default_model": "deepseek-chat", "url": "https://platform.deepseek.com/", "free": True, "icon": "D", "color": "green"},
-    {"id": "openrouter", "name": "OpenRouter", "key_env": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_CHAT_MODEL", "default_model": "meta-llama/llama-3.1-405b-instruct", "url": "https://openrouter.ai/keys", "free": True, "icon": "R", "color": "bright_yellow"},
-    {"id": "sambanova", "name": "SambaNova", "key_env": "SAMBANOVA_API_KEY", "model_env": "", "default_model": "Meta-Llama-3.1-405B-Instruct", "url": "https://cloud.sambanova.ai/", "free": True, "icon": "S", "color": "bright_green"},
-    {"id": "cerebras", "name": "Cerebras", "key_env": "CEREBRAS_API_KEY", "model_env": "", "default_model": "llama-3.3-70b", "url": "https://cloud.cerebras.ai/", "free": True, "icon": "C", "color": "bright_cyan"},
-    {"id": "nvidia", "name": "NVIDIA", "key_env": "NVIDIA_API_KEY", "model_env": "", "default_model": "meta/llama-3.1-405b-instruct", "url": "https://build.nvidia.com/", "free": True, "icon": "N", "color": "bright_red"},
-    {"id": "ollama", "name": "Ollama (Local)", "key_env": "", "model_env": "OLLAMA_CHAT_MODEL", "default_model": "qwen2.5-coder:7b", "url": "https://ollama.com/", "free": True, "icon": "L", "color": "cyan"},
 ]
 
 # ============================================================================
@@ -572,26 +567,9 @@ def _exec(actions):
 
 
 def _get_provider_info():
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
-    provider = os.getenv("AI_PROVIDER", "aurine").strip().lower()
-
-    ollama_running = False
-    try:
-        import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:11434/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as r:
-            ollama_running = r.status == 200
-    except Exception:
-        pass
-
-    if provider == "aurine" and ollama_running:
-        model = os.getenv("AURINE_NATIVE_MODEL", "aurine-coder")
-        return provider, model, True
-
-    if provider == "ollama" and ollama_running:
-        model = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5-coder:7b")
-        return provider, model, True
+    from app.config import _read_env
+    _read_env()
+    provider = os.getenv("AI_PROVIDER", "google").strip().lower()
 
     model = os.getenv("GOOGLE_CHAT_MODEL") or os.getenv("OPENAI_CHAT_MODEL") or os.getenv("GROQ_CHAT_MODEL") or "gemini-2.0-flash"
     has_key = bool(
@@ -599,12 +577,7 @@ def _get_provider_info():
         os.getenv("OPENAI_API_KEY", "").strip() or
         os.getenv("GROQ_API_KEY", "").strip() or
         os.getenv("DEEPSEEK_API_KEY", "").strip() or
-        os.getenv("OPENROUTER_API_KEY", "").strip() or
-        os.getenv("ANTHROPIC_API_KEY", "").strip() or
-        os.getenv("SAMBANOVA_API_KEY", "").strip() or
-        os.getenv("CEREBRAS_API_KEY", "").strip() or
-        os.getenv("NVIDIA_API_KEY", "").strip() or
-        os.getenv("MISTRAL_API_KEY", "").strip()
+        os.getenv("ANTHROPIC_API_KEY", "").strip()
     )
     return provider, model, has_key
 
@@ -786,21 +759,9 @@ def _command_palette():
 # ============================================================================
 
 def _show_connect():
-    """Interactive provider connection like OpenCode."""
+    """Interactive provider connection."""
     console.print()
-    console.print(Panel("[bold cyan]Connect to AI Provider[/]\n[dim]Set up your AI model connection. Aurine works locally - no API key needed![/]", border_style="cyan", padding=(0, 1)))
-
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
-
-    ollama_running = False
-    try:
-        import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:11434/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as r:
-            ollama_running = r.status == 200
-    except Exception:
-        pass
+    console.print(Panel("[bold cyan]Connect to AI Provider[/]\n[dim]Get free key: https://aistudio.google.com/app/apikey[/]", border_style="cyan", padding=(0, 1)))
 
     status_table = Table(box=MINIMAL, border_style="cyan", padding=(0, 1))
     status_table.add_column("Provider", style="bold")
@@ -808,12 +769,9 @@ def _show_connect():
     status_table.add_column("Key", style="dim")
     status_table.add_column("Free", min_width=5)
 
-    aurine_status = "[green]✓ running[/]" if ollama_running else "[yellow]install Ollama[/]"
-    status_table.add_row("A  Aurine (Local)", aurine_status, "—", "[green]✓[/]")
-
     for p in PROVIDERS:
         key_val = os.getenv(p["key_env"], "") if p["key_env"] else ""
-        is_set = bool(key_val) if p["key_env"] else (p["id"] == "ollama")
+        is_set = bool(key_val)
         status = "[green]✓ connected[/]" if is_set else "[red]✗ not set[/]"
         key_display = f"{key_val[:8]}..." if len(key_val) > 8 else (key_val if key_val else "—")
         free = "[green]✓[/]" if p["free"] else "[red]✗[/]"
@@ -822,15 +780,10 @@ def _show_connect():
     console.print(status_table)
     console.print()
 
-    options = [
-        {
-            "display": f"A  Aurine (Local)  {'[green]✓ running[/]' if ollama_running else '[yellow]install Ollama[/]'}  [green](free)[/]",
-            "value": {"id": "aurine", "name": "Aurine (Local)", "key_env": "", "model_env": "AURINE_NATIVE_MODEL", "default_model": "aurine-coder", "url": "https://ollama.com/"},
-        },
-    ]
+    options = []
     for p in PROVIDERS:
         key_val = os.getenv(p["key_env"], "") if p["key_env"] else ""
-        is_set = bool(key_val) if p["key_env"] else (p["id"] == "ollama")
+        is_set = bool(key_val)
         status = "[green]✓[/]" if is_set else "[red]✗[/]"
         free = " [green](free)[/]" if p["free"] else " [red](paid)[/]"
         options.append({
@@ -845,30 +798,9 @@ def _show_connect():
     provider = result
     console.print()
 
-    if provider["id"] == "aurine":
-        console.print("[bold cyan]Aurine (Local AI)[/]")
-        console.print("[cyan]Aurine runs locally on your device with Ollama.[/]")
-        console.print()
-        console.print("[dim]Setup:[/]")
-        console.print("[dim]  1. Install Ollama: https://ollama.com[/]")
-        console.print("[dim]  2. Start Ollama[/]")
-        console.print("[dim]  3. Restart Aurine - model auto-downloads (~4GB)[/]")
-        _set_env_var("AI_PROVIDER", "aurine")
-        console.print("\n[green]✓[/] Provider set to Aurine (local)")
-        console.print("[green]✓[/] No API key needed - runs on your device\n")
-        return
-
     console.print(f"[bold cyan]Connecting to {provider['name']}[/]")
     console.print(f"[dim]Get your API key: {provider['url']}[/]")
     console.print()
-
-    if provider["id"] == "ollama":
-        console.print("[cyan]Ollama runs locally. Make sure it's running:[/]")
-        console.print("[dim]  ollama pull qwen2.5-coder:7b[/]")
-        console.print("[dim]  ollama pull nomic-embed-text[/]")
-        _set_env_var("AI_PROVIDER", "ollama")
-        console.print("\n[green]✓[/] Provider set to Ollama (local)\n")
-        return
 
     current_key = os.getenv(provider["key_env"], "") if provider["key_env"] else ""
     hint = f"  [dim](current: {current_key[:8]}...)[/]" if current_key else ""
@@ -961,8 +893,8 @@ def _show_agents():
 
 
 def _show_models():
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
+    from app.config import _read_env
+    _read_env()
     table = Table(box=ROUNDED, title="[bold cyan]AI Models[/] [dim]- All latest, high quality[/]", title_style="bold cyan", border_style="cyan", padding=(0, 1))
     table.add_column("Model", style="bold", min_width=32)
     table.add_column("Provider", style="cyan", min_width=12)
@@ -1048,23 +980,19 @@ def _show_init():
 
 
 def _show_config():
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
+    from app.config import _read_env
+    _read_env()
     table = Table(box=ROUNDED, title="[bold cyan]Configuration[/]", title_style="bold cyan", border_style="cyan", padding=(0, 1))
     table.add_column("Key", style="bold yellow", min_width=24)
     table.add_column("Status", min_width=12)
     table.add_column("Value", style="dim")
     keys = {
-        "AI_PROVIDER": os.getenv("AI_PROVIDER", "aurine"),
+        "AI_PROVIDER": os.getenv("AI_PROVIDER", "google"),
         "OPENAI_API_KEY": "set" if os.getenv("OPENAI_API_KEY") else "not set",
         "GOOGLE_API_KEY": "set" if os.getenv("GOOGLE_API_KEY") else "not set",
         "GROQ_API_KEY": "set" if os.getenv("GROQ_API_KEY") else "not set",
         "DEEPSEEK_API_KEY": "set" if os.getenv("DEEPSEEK_API_KEY") else "not set",
-        "OPENROUTER_API_KEY": "set" if os.getenv("OPENROUTER_API_KEY") else "not set",
         "ANTHROPIC_API_KEY": "set" if os.getenv("ANTHROPIC_API_KEY") else "not set",
-        "SAMBANOVA_API_KEY": "set" if os.getenv("SAMBANOVA_API_KEY") else "not set",
-        "CEREBRAS_API_KEY": "set" if os.getenv("CEREBRAS_API_KEY") else "not set",
-        "NVIDIA_API_KEY": "set" if os.getenv("NVIDIA_API_KEY") else "not set",
         "OPENAI_CHAT_MODEL": os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
         "GOOGLE_CHAT_MODEL": os.getenv("GOOGLE_CHAT_MODEL", "gemini-2.0-flash"),
         "GROQ_CHAT_MODEL": os.getenv("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile"),
@@ -1094,18 +1022,10 @@ def _show_doctor():
     table2 = Table(box=MINIMAL, border_style="cyan", padding=(0, 1))
     table2.add_column("Check", style="bold cyan", min_width=16)
     table2.add_column("Status", min_width=20)
-    try:
-        from app.llm import _ollama_running, _aurine_server_running
-        ollama_ok = _ollama_running()
-        aurine_ok = _aurine_server_running()
-        table2.add_row("Ollama", "[green]✓ running[/]" if ollama_ok else "[yellow]not running[/]")
-        table2.add_row("Aurine Server", "[green]✓ running[/]" if aurine_ok else "[yellow]not running[/]")
-    except Exception:
-        table2.add_row("AI Check", "[yellow]cannot check[/]")
     prov, model, has_key = _get_provider_info()
     table2.add_row("Provider", f"[bold]{prov}[/]")
     table2.add_row("Model", model)
-    table2.add_row("API Key", "[green]✓ configured[/]" if has_key else "[red]✗ MISSING[/]")
+    table2.add_row("API Key", "[green]✓ configured[/]" if has_key else "[red]✗ MISSING - add GOOGLE_API_KEY to .env[/]")
     console.print(Panel(table2, title="[bold cyan]AI Provider[/]", border_style="cyan"))
     table3 = Table(box=MINIMAL, border_style="cyan", padding=(0, 1))
     table3.add_column("Tool", style="bold", min_width=10)
@@ -1697,32 +1617,22 @@ def _run_turn(inp, chat_id):
 
 def _check_ai_ready():
     """Check if any cloud provider API key is available."""
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
-
-    for key in ["GOOGLE_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY",
-                "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "SAMBANOVA_API_KEY",
-                "CEREBRAS_API_KEY", "NVIDIA_API_KEY"]:
+    from app.config import _read_env
+    _read_env()
+    for key in ["GOOGLE_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]:
         val = os.getenv(key, "").strip()
         if val and len(val) > 5:
             return True
-
-    return False
-        pass
     return False
 
 
 def _auto_setup_wizard():
     """Interactive setup wizard - guides user to connect an AI provider."""
-    console.print(Panel("[bold cyan]Quick AI Setup[/]\n[dim]Aurine works locally with Ollama - no API key needed![/]", border_style="cyan"))
+    console.print(Panel("[bold cyan]Quick AI Setup[/]\n[dim]Get free key: https://aistudio.google.com/app/apikey[/]", border_style="cyan"))
 
     options = [
         {
-            "display": "A  Aurine (Local)  [green](free, no API key)[/]  [dim]Runs on your device[/]",
-            "value": {"name": "Aurine", "id": "aurine", "key_env": "", "model_env": "AURINE_NATIVE_MODEL", "model": "aurine-coder", "url": "https://ollama.com/", "steps": "1. Install Ollama: https://ollama.com\n2. Start Ollama\n3. Restart Aurine - model auto-downloads"},
-        },
-        {
-            "display": "G  Google Gemini  [green](free)[/]  [dim]aistudio.google.com[/]",
+            "display": "G  Google Gemini  [green](free, recommended)[/]  [dim]aistudio.google.com[/]",
             "value": {"name": "Google Gemini", "id": "google", "key_env": "GOOGLE_API_KEY", "model_env": "GOOGLE_CHAT_MODEL", "model": "gemini-2.0-flash", "url": "https://aistudio.google.com/app/apikey", "steps": "1. Click link\n2. Sign in with Google\n3. Click 'Create API Key'\n4. Copy the key"},
         },
         {
@@ -1742,18 +1652,7 @@ def _auto_setup_wizard():
         return
 
     provider = result
-
-    if provider["id"] == "aurine":
         console.print()
-        console.print("[bold cyan]A  Aurine (Local AI)[/]")
-        console.print(Panel(provider["steps"], border_style="cyan", title="[dim]Setup[/]"))
-        _set_env_var("AI_PROVIDER", "aurine")
-        console.print("\n[green]✓[/] Provider set to Aurine (local)")
-        console.print("[green]✓[/] Model will auto-download on first run")
-        console.print("[dim]Starting chat...[/]\n")
-        return
-
-    console.print()
     console.print(f"[bold cyan]{provider['name']}[/]")
     console.print(Panel(provider["steps"], border_style="cyan", title="[dim]Steps[/]"))
     console.print(f"[dim]Link: {provider['url']}[/]")
@@ -1795,10 +1694,8 @@ def _print_header():
     header.add_row("[dim]OpenCode-style terminal coding agent[/]")
     header.add_row(f"[dim]Agent:[/] {agent['icon']} [bold]{agent['name']}[/]  [dim]Model:[/] {model_info['name']}  [dim]Provider:[/] {prov}")
     header.add_row(f"[dim]Session:[/] [cyan]{session}[/]  [dim]Workspace:[/] {WORKSPACE.name}")
-    if not has_key and prov in ("aurine", "ollama"):
-        header.add_row("[yellow]![/] [dim]Ollama not running - install from https://ollama.com[/]")
-    elif not has_key:
-        header.add_row("[yellow]![/] [dim]No cloud API key - type /connect to set up[/]")
+    if not has_key:
+        header.add_row("[yellow]![/] [dim]No API key - type /connect to set up (free Google key)[/]")
 
     console.print()
     console.print(header)

@@ -7,77 +7,64 @@ from .config import get_settings
 
 
 def chat_completion(
-    messages: list[dict],
-    temperature: float = 0.2,
-    json_mode: bool = False,
-    model_config: dict | None = None,
-) -> str:
+    messages,
+    temperature=0.2,
+    json_mode=False,
+    model_config=None,
+):
     settings = get_settings()
     provider = settings.ai_provider.lower()
 
     if provider == "google" and settings.google_api_key:
-        return _google_completion(messages, settings.google_chat_model, settings.google_api_key, temperature)
+        return _google(messages, settings.google_chat_model, settings.google_api_key, temperature)
 
     if provider == "openai" and settings.openai_api_key:
-        return _openai_completion(messages, settings.chat_model, settings.openai_api_key, temperature, json_mode)
+        return _openai(messages, settings.openai_chat_model, settings.openai_api_key, temperature, json_mode)
 
     if provider == "groq" and settings.groq_api_key:
-        return _openai_completion(messages, settings.groq_chat_model, settings.groq_api_key, temperature, json_mode,
-                                  base_url="https://api.groq.com/openai/v1")
+        return _openai(messages, settings.groq_chat_model, settings.groq_api_key, temperature, json_mode,
+                       "https://api.groq.com/openai/v1")
 
     if provider == "deepseek" and settings.deepseek_api_key:
-        return _openai_completion(messages, settings.deepseek_chat_model, settings.deepseek_api_key, temperature, json_mode,
-                                  base_url="https://api.deepseek.com")
+        return _openai(messages, settings.deepseek_chat_model, settings.deepseek_api_key, temperature, json_mode,
+                       "https://api.deepseek.com")
 
     if provider == "anthropic" and settings.anthropic_api_key:
-        return _anthropic_completion(messages, settings.anthropic_chat_model, settings.anthropic_api_key, temperature)
+        return _anthropic(messages, settings.anthropic_chat_model, settings.anthropic_api_key, temperature)
 
     if settings.google_api_key:
-        return _google_completion(messages, settings.google_chat_model, settings.google_api_key, temperature)
-
+        return _google(messages, settings.google_chat_model, settings.google_api_key, temperature)
     if settings.openai_api_key:
-        return _openai_completion(messages, settings.chat_model, settings.openai_api_key, temperature, json_mode)
+        return _openai(messages, settings.openai_chat_model, settings.openai_api_key, temperature, json_mode)
 
-    return "No AI provider configured. Set GOOGLE_API_KEY or OPENAI_API_KEY in .env"
+    return "No AI provider. Add GOOGLE_API_KEY to .env"
 
 
-def _google_completion(messages: list[dict], model: str, api_key: str, temperature: float) -> str:
+def _google(messages, model, api_key, temperature):
     contents = []
-    system_instruction = ""
-    for item in messages:
-        role = item.get("role", "user")
-        content = item.get("content", "")
-        if role == "system":
-            system_instruction += content + "\n"
-        elif role in ("user", "assistant"):
-            role_map = {"user": "user", "assistant": "model"}
-            contents.append({"role": role_map.get(role, "user"), "parts": [{"text": content}]})
+    sys = ""
+    for m in messages:
+        r = m.get("role", "user")
+        c = m.get("content", "")
+        if r == "system":
+            sys += c + "\n"
+        elif r in ("user", "assistant"):
+            contents.append({"role": "user" if r == "user" else "model", "parts": [{"text": c}]})
 
-    body = {
-        "contents": contents,
-        "generationConfig": {"temperature": temperature, "maxOutputTokens": 8192},
-    }
-    if system_instruction.strip():
-        body["systemInstruction"] = {"parts": [{"text": system_instruction.strip()}]}
+    body = {"contents": contents, "generationConfig": {"temperature": temperature, "maxOutputTokens": 8192}}
+    if sys.strip():
+        body["systemInstruction"] = {"parts": [{"text": sys.strip()}]}
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read().decode())
-    candidates = data.get("candidates", [])
-    if candidates:
-        parts = candidates[0].get("content", {}).get("parts", [])
-        return "".join(p.get("text", "") for p in parts)
-    return ""
+    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts)
 
 
-def _openai_completion(messages: list[dict], model: str, api_key: str, temperature: float,
-                       json_mode: bool = False, base_url: str = "https://api.openai.com/v1") -> str:
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-    }
+def _openai(messages, model, api_key, temperature, json_mode=False, base_url="https://api.openai.com/v1"):
+    payload = {"model": model, "messages": messages, "temperature": temperature}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
@@ -87,44 +74,25 @@ def _openai_completion(messages: list[dict], model: str, api_key: str, temperatu
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read().decode())
-    choices = data.get("choices", [])
-    if choices:
-        return choices[0].get("message", {}).get("content", "")
-    return ""
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
-def _anthropic_completion(messages: list[dict], model: str, api_key: str, temperature: float) -> str:
-    system = "\n\n".join(item["content"] for item in messages if item.get("role") == "system")
-    chat_messages = [
-        {"role": item["role"], "content": item["content"]}
-        for item in messages
-        if item.get("role") in ("user", "assistant") and item.get("content")
-    ]
-    body = {
-        "model": model,
-        "max_tokens": 8192,
-        "temperature": temperature,
-        "system": system,
-        "messages": chat_messages,
-    }
+def _anthropic(messages, model, api_key, temperature):
+    sys = "\n\n".join(m["content"] for m in messages if m.get("role") == "system")
+    chat = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("role") in ("user", "assistant") and m.get("content")]
+    body = {"model": model, "max_tokens": 8192, "temperature": temperature, "system": sys, "messages": chat}
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read().decode())
-    parts = data.get("content", [])
-    return "".join(part.get("text", "") for part in parts if part.get("type") == "text")
+    return "".join(p.get("text", "") for p in data.get("content", []) if p.get("type") == "text")
 
 
-def chat_completion_stream(
-    messages: list[dict],
-    temperature: float = 0.2,
-    model_config: dict | None = None,
-) -> Generator[str, None, None]:
-    result = chat_completion(messages, temperature, model_config=model_config)
-    yield result
+def chat_completion_stream(messages, temperature=0.2, model_config=None):
+    yield chat_completion(messages, temperature, model_config=model_config)

@@ -96,8 +96,8 @@ if [ ! -f "$VENV_DIR/bin/activate" ]; then
 fi
 
 "$VENV_DIR/bin/pip" install --upgrade pip -q 2>/dev/null
-"$VENV_DIR/bin/pip" install openai httpx pydantic python-dotenv rich questionary pygments tiktoken numpy scikit-learn -q 2>/dev/null || \
-"$VENV_DIR/bin/pip" install openai httpx pydantic python-dotenv rich questionary pygments tiktoken numpy scikit-learn
+"$VENV_DIR/bin/pip" install rich questionary -q 2>/dev/null || \
+"$VENV_DIR/bin/pip" install rich questionary
 
 echo "  [OK] Dependencies installed"
 

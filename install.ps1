@@ -199,7 +199,7 @@ if (-not (Test-Path "$venvDir\pyvenv.cfg")) {
 Start-Process -FilePath "$venvPy" -ArgumentList "-m pip install --upgrade pip" -Wait -NoNewWindow -ErrorAction SilentlyContinue
 
 # Install packages one by one (NEVER crash)
-$packages = @("rich", "questionary", "openai", "httpx", "pydantic", "python-dotenv", "pygments", "fastapi", "uvicorn", "pypdf", "tiktoken", "numpy", "scikit-learn", "aiohttp", "bcrypt", "slowapi", "websockets", "python-multipart", "jinja2")
+$packages = @("rich", "questionary")
 $ok = 0
 $fail = 0
 foreach ($pkg in $packages) {
