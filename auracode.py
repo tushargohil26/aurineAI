@@ -1569,16 +1569,20 @@ def _run_turn(inp, chat_id):
                 resp = _ask(inp, tool_results, history)
             except Exception as e:
                 err = str(e)
-                if "400" in err or "401" in err or "403" in err or "Invalid" in err.lower():
-                    console.print(f"\n  [red]✗ AI Error:[/] {err}")
+                if "429" in err or "quota" in err.lower() or "insufficient_quota" in err.lower() or "rate limit" in err.lower():
+                    console.print(f"\n  [red]✗ Quota/Rate Limit Error:[/] {err[:300]}")
+                    console.print("  [yellow]Your current provider's quota is exhausted or rate limited.[/]")
+                    console.print("  [dim]Fix: type /connect to switch to a free provider (Google Gemini, Groq, DeepSeek)[/]\n")
+                elif "400" in err or "401" in err or "403" in err or "Invalid" in err.lower():
+                    console.print(f"\n  [red]✗ AI Error:[/] {err[:300]}")
                     console.print("  [yellow]Your API key may be invalid or missing.[/]")
                     console.print("  [dim]Fix: type /connect to set up a working AI provider[/]\n")
-                elif "No AI backend" in err or "not available" in err.lower():
-                    console.print(f"\n  [red]✗ No AI backend available[/]")
-                    console.print("  [yellow]Fix: type /connect to set up an AI provider[/]")
-                    console.print("  [dim]Free options: Google Gemini, Groq, DeepSeek[/]\n")
+                elif "All AI providers failed" in err or "No AI provider" in err or "not available" in err.lower():
+                    console.print(f"\n  [red]✗ No working AI provider[/]")
+                    console.print("  [yellow]All providers failed. Try a free provider:[/]")
+                    console.print("  [dim]  /connect  - set up Google Gemini, Groq, or DeepSeek (all free)[/]\n")
                 else:
-                    console.print(f"\n  [red]✗ error:[/] {err}\n")
+                    console.print(f"\n  [red]✗ error:[/] {err[:500]}\n")
                 return
 
         msg = resp.get("message", "")
@@ -1652,7 +1656,7 @@ def _auto_setup_wizard():
         return
 
     provider = result
-        console.print()
+    console.print()
     console.print(f"[bold cyan]{provider['name']}[/]")
     console.print(Panel(provider["steps"], border_style="cyan", title="[dim]Steps[/]"))
     console.print(f"[dim]Link: {provider['url']}[/]")

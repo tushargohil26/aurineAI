@@ -1,4 +1,4 @@
-# AuraCode Setup - Run once on each device
+# AuraCode Setup v3.0 - Run once on each device
 # After this, 'auracode' works from ANY terminal, auto-updates, auto-detects AI
 
 $ErrorActionPreference = "Stop"
@@ -6,7 +6,7 @@ $InstallDir = "$env:USERPROFILE\.auracode"
 $ProjectDir = $PSScriptRoot
 
 Write-Host ""
-Write-Host "  AuraCode Setup" -ForegroundColor Cyan
+Write-Host "  AuraCode v3.0 Setup" -ForegroundColor Cyan
 Write-Host "  Device: $env:COMPUTERNAME ($env:OS)"
 Write-Host ""
 
@@ -25,7 +25,7 @@ if (-not (Test-Path $InstallDir)) {
 }
 
 # === COPY LAUNCHERS ===
-$files = @("auracode.bat", "auracode.ps1")
+$files = @("auracode.bat", "auracode.ps1", "auracode.sh")
 foreach ($f in $files) {
     $src = Join-Path $ProjectDir $f
     $dst = Join-Path $InstallDir $f
@@ -38,19 +38,39 @@ foreach ($f in $files) {
 # === CREATE .ENV IF MISSING ===
 $envFile = Join-Path $ProjectDir ".env"
 if (-not (Test-Path $envFile)) {
-    # Always create fresh .env - NEVER copy from source (may contain developer's personal keys)
     @"
-AI_PROVIDER=google
+# AuraCode v3.0 - Configuration
+AI_PROVIDER=aurine
+
+# Local Ollama (free, no key needed)
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_MODEL=qwen2.5-coder:7b
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+AURINE_NATIVE_MODEL=qwen2.5-coder:7b
+AURINE_EMBEDDING_MODEL=nomic-embed-text
+
+# Cloud (optional, for fallback)
 GOOGLE_API_KEY=
 GOOGLE_CHAT_MODEL=gemini-2.0-flash
+GROQ_API_KEY=
 OPENAI_API_KEY=
 OPENAI_CHAT_MODEL=gpt-4o-mini
-GROQ_API_KEY=
 DEEPSEEK_API_KEY=
+ANTHROPIC_API_KEY=
+
+# Database
 VECTOR_DB=$ProjectDir\vector_store.sqlite3
 DATA_DIR=$ProjectDir\data
+GENERATED_PROJECTS_DIR=$ProjectDir\generated_projects
+
+# Features
+MEMORY_ENABLED=true
+REASONING_ENABLED=true
+CHAIN_OF_THOUGHT=true
+SELF_VERIFY=true
+MAX_TOOL_ITERATIONS=5
 "@ | Set-Content $envFile -NoNewline
-    Write-Host "  [ok] Created fresh .env (add GOOGLE_API_KEY for free AI)" -ForegroundColor Green
+    Write-Host "  [ok] Created .env (local AI by default)" -ForegroundColor Green
 }
 
 # === ENSURE VENV + DEPS ===
@@ -59,7 +79,6 @@ Push-Location $ProjectDir
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
     python -m venv .venv 2>$null
 }
-# Only install if marker file missing (fast startup)
 if (-not (Test-Path ".venv\.deps_installed")) {
     Write-Host "  Installing packages (first run only)..." -ForegroundColor DarkGray
     .\.venv\Scripts\python.exe -m pip install -r requirements.txt -q 2>$null
@@ -77,12 +96,24 @@ if (-not (Test-Path $dataDir)) {
     Write-Host "  [ok] Device data: $dataDir" -ForegroundColor Green
 }
 
+# === CHECK OLLAMA ===
+$ollamaOk = $false
+try {
+    $testConn = New-Object System.Net.Sockets.TcpClient
+    $testConn.Connect("127.0.0.1", 11434)
+    $testConn.Close()
+    $ollamaOk = $true
+    Write-Host "  [ok] Ollama: running" -ForegroundColor Green
+} catch {
+    Write-Host "  [!] Ollama not running - cloud AI will be used" -ForegroundColor Yellow
+}
+
 # === CHECK AI BACKEND ===
-$hasCloudKey = $false
 $envContent = Get-Content $envFile -ErrorAction SilentlyContinue
+$hasCloudKey = $false
 if ($envContent) {
     foreach ($line in $envContent) {
-        if ($line -match "^(GOOGLE_API_KEY|OPENAI_API_KEY|GROQ_API_KEY)=(.{10,})") {
+        if ($line -match "^(GOOGLE_API_KEY|OPENAI_API_KEY|GROQ_API_KEY|DEEPSEEK_API_KEY)=(.{10,})") {
             $hasCloudKey = $true
             $provider = $line.Split("=")[0]
             Write-Host "  [ok] $provider : configured" -ForegroundColor Green
@@ -90,12 +121,14 @@ if ($envContent) {
     }
 }
 
-if ($hasCloudKey) {
+if ($ollamaOk) {
+    Write-Host "  [ok] AI: ready (local + cloud fallback)" -ForegroundColor Green
+} elseif ($hasCloudKey) {
     Write-Host "  [ok] AI: ready (cloud)" -ForegroundColor Green
 } else {
-    Write-Host "  [!] No API key configured" -ForegroundColor Yellow
-    Write-Host "      Get free key: https://aistudio.google.com/app/apikey" -ForegroundColor White
-    Write-Host "      Add to .env: GOOGLE_API_KEY=your_key" -ForegroundColor DarkGray
+    Write-Host "  [!] No AI backend - add GOOGLE_API_KEY or start Ollama" -ForegroundColor Yellow
+    Write-Host "      Free key: https://aistudio.google.com/app/apikey" -ForegroundColor White
+    Write-Host "      Ollama: ollama pull qwen2.5-coder:7b" -ForegroundColor White
 }
 
 # === ADD TO PATH ===
