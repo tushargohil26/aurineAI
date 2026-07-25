@@ -376,3 +376,28 @@ def chat_with_tools(messages, tools, tool_executor=None, temperature=0.2, model_
 
 def supports_tools(model_config=None):
     return True
+
+
+def get_active_provider():
+    """Return which provider is actually being used right now."""
+    settings = get_settings()
+    providers = _build_providers(settings)
+    if providers:
+        name, _ = providers[0]
+        model = ""
+        if name == "aurine":
+            model = settings.aurine_native_model
+        elif name == "ollama":
+            model = settings.ollama_chat_model or settings.aurine_native_model
+        elif name == "google":
+            model = settings.google_chat_model
+        elif name == "groq":
+            model = settings.groq_chat_model
+        elif name == "deepseek":
+            model = settings.deepseek_chat_model
+        elif name == "openai":
+            model = settings.openai_chat_model
+        elif name == "anthropic":
+            model = settings.anthropic_chat_model
+        return name, model
+    return "none", "none"

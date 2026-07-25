@@ -62,7 +62,7 @@ def _load_ai():
     if _HAS_AI:
         return
     try:
-        from app.llm import chat_completion, chat_completion_stream, FREE_PROVIDER_URLS
+        from app.llm import chat_completion, chat_completion_stream
         from app.device import (
             get_device_id, get_user_id, get_device_name,
             store_chat_message, get_chat_history, get_all_chats,
@@ -106,11 +106,14 @@ MODELS = [
 # PROVIDERS - for /connect
 # ============================================================================
 PROVIDERS = [
+    {"id": "ollama", "name": "Ollama (Local)", "key_env": None, "model_env": "OLLAMA_CHAT_MODEL", "default_model": "qwen2.5-coder:7b", "url": "https://ollama.com", "free": True, "icon": "L", "color": "bright_cyan"},
     {"id": "google", "name": "Google Gemini", "key_env": "GOOGLE_API_KEY", "model_env": "GOOGLE_CHAT_MODEL", "default_model": "gemini-2.0-flash", "url": "https://aistudio.google.com/app/apikey", "free": True, "icon": "G", "color": "blue"},
     {"id": "groq", "name": "Groq", "key_env": "GROQ_API_KEY", "model_env": "GROQ_CHAT_MODEL", "default_model": "llama-3.3-70b-versatile", "url": "https://console.groq.com/keys", "free": True, "icon": "Q", "color": "bright_magenta"},
     {"id": "openai", "name": "OpenAI", "key_env": "OPENAI_API_KEY", "model_env": "OPENAI_CHAT_MODEL", "default_model": "gpt-4o-mini", "url": "https://platform.openai.com/api-keys", "free": False, "icon": "O", "color": "bright_green"},
     {"id": "anthropic", "name": "Anthropic", "key_env": "ANTHROPIC_API_KEY", "model_env": "ANTHROPIC_CHAT_MODEL", "default_model": "claude-sonnet-4-20250514", "url": "https://console.anthropic.com/", "free": False, "icon": "A", "color": "yellow"},
     {"id": "deepseek", "name": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "model_env": "DEEPSEEK_CHAT_MODEL", "default_model": "deepseek-chat", "url": "https://platform.deepseek.com/", "free": True, "icon": "D", "color": "green"},
+    {"id": "openrouter", "name": "OpenRouter", "key_env": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_CHAT_MODEL", "default_model": "meta-llama/llama-3.1-405b-instruct", "url": "https://openrouter.ai/keys", "free": True, "icon": "R", "color": "bright_yellow"},
+    {"id": "mistral", "name": "Mistral", "key_env": "MISTRAL_API_KEY", "model_env": "MISTRAL_CHAT_MODEL", "default_model": "mistral-small-latest", "url": "https://console.mistral.ai/api-keys/", "free": False, "icon": "M", "color": "bright_red"},
 ]
 
 # ============================================================================
@@ -569,17 +572,35 @@ def _exec(actions):
 def _get_provider_info():
     from app.config import _read_env
     _read_env()
-    provider = os.getenv("AI_PROVIDER", "google").strip().lower()
+    provider = os.getenv("AI_PROVIDER", "aurine").strip().lower()
 
-    model = os.getenv("GOOGLE_CHAT_MODEL") or os.getenv("OPENAI_CHAT_MODEL") or os.getenv("GROQ_CHAT_MODEL") or "gemini-2.0-flash"
-    has_key = bool(
-        os.getenv("GOOGLE_API_KEY", "").strip() or
-        os.getenv("OPENAI_API_KEY", "").strip() or
-        os.getenv("GROQ_API_KEY", "").strip() or
-        os.getenv("DEEPSEEK_API_KEY", "").strip() or
-        os.getenv("ANTHROPIC_API_KEY", "").strip()
-    )
-    return provider, model, has_key
+    # Auto-detect which provider actually has a key set
+    detected_provider = None
+    detected_model = None
+    for p in PROVIDERS:
+        if p["key_env"]:
+            key = os.getenv(p["key_env"], "").strip()
+            if key:
+                detected_provider = p["id"]
+                detected_model = os.getenv(p.get("model_env", ""), "") or p["default_model"]
+                break
+        elif p["id"] == "ollama":
+            ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+            try:
+                req = urllib.request.Request(f"{ollama_url}/api/tags")
+                resp = urllib.request.urlopen(req, timeout=2)
+                detected_provider = "ollama"
+                detected_model = os.getenv("OLLAMA_CHAT_MODEL", "") or os.getenv("AURINE_NATIVE_MODEL", "qwen2.5-coder:7b")
+            except Exception:
+                pass
+
+    if not detected_provider:
+        detected_provider = provider or "aurine"
+        detected_model = os.getenv("AURINE_NATIVE_MODEL", "qwen2.5-coder:7b") if detected_provider in ("aurine", "ollama") else "unknown"
+
+    model = detected_model
+    has_key = detected_provider is not None
+    return detected_provider, model, has_key
 
 
 def _get_device_str():
@@ -761,29 +782,57 @@ def _command_palette():
 def _show_connect():
     """Interactive provider connection."""
     console.print()
-    console.print(Panel("[bold cyan]Connect to AI Provider[/]\n[dim]Get free key: https://aistudio.google.com/app/apikey[/]", border_style="cyan", padding=(0, 1)))
+    console.print(Panel("[bold cyan]Connect to AI Provider[/]\n[dim]Ollama (local) is free & works offline. Cloud providers need API keys.[/]", border_style="cyan", padding=(0, 1)))
 
     status_table = Table(box=MINIMAL, border_style="cyan", padding=(0, 1))
     status_table.add_column("Provider", style="bold")
     status_table.add_column("Status", min_width=12)
-    status_table.add_column("Key", style="dim")
+    status_table.add_column("Model", style="dim", min_width=24)
     status_table.add_column("Free", min_width=5)
 
     for p in PROVIDERS:
-        key_val = os.getenv(p["key_env"], "") if p["key_env"] else ""
+        if p["key_env"]:
+            key_val = os.getenv(p["key_env"], "")
+        else:
+            key_val = ""
+            if p["id"] == "ollama":
+                ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+                try:
+                    req = urllib.request.Request(f"{ollama_url}/api/tags")
+                    resp = urllib.request.urlopen(req, timeout=2)
+                    data = json.loads(resp.read().decode())
+                    models = data.get("models", [])
+                    if models:
+                        key_val = "found"
+                except Exception:
+                    pass
         is_set = bool(key_val)
-        status = "[green]✓ connected[/]" if is_set else "[red]✗ not set[/]"
-        key_display = f"{key_val[:8]}..." if len(key_val) > 8 else (key_val if key_val else "—")
+        status = "[green]✓ active[/]" if is_set else "[red]✗ not set[/]"
+        model_name = p["default_model"]
         free = "[green]✓[/]" if p["free"] else "[red]✗[/]"
-        status_table.add_row(f"{p['icon']} {p['name']}", status, key_display, free)
+        status_table.add_row(f"{p['icon']} {p['name']}", status, model_name, free)
 
     console.print(status_table)
     console.print()
 
     options = []
     for p in PROVIDERS:
-        key_val = os.getenv(p["key_env"], "") if p["key_env"] else ""
-        is_set = bool(key_val)
+        if p["key_env"]:
+            key_val = os.getenv(p["key_env"], "")
+            is_set = bool(key_val)
+        else:
+            is_set = False
+            if p["id"] == "ollama":
+                ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+                try:
+                    req = urllib.request.Request(f"{ollama_url}/api/tags")
+                    resp = urllib.request.urlopen(req, timeout=2)
+                    data = json.loads(resp.read().decode())
+                    models = data.get("models", [])
+                    if models:
+                        is_set = True
+                except Exception:
+                    pass
         status = "[green]✓[/]" if is_set else "[red]✗[/]"
         free = " [green](free)[/]" if p["free"] else " [red](paid)[/]"
         options.append({
@@ -797,6 +846,10 @@ def _show_connect():
 
     provider = result
     console.print()
+
+    if provider["id"] == "ollama":
+        _connect_ollama()
+        return
 
     console.print(f"[bold cyan]Connecting to {provider['name']}[/]")
     console.print(f"[dim]Get your API key: {provider['url']}[/]")
@@ -828,6 +881,49 @@ def _show_connect():
     console.print(f"[green]✓[/] Provider: [bold]{provider['name']}[/]")
     console.print(f"[green]✓[/] Model: [bold]{provider['default_model']}[/]")
     console.print(f"\n[dim]Restart AuraCode to apply changes, or type /model to switch models.[/]\n")
+
+
+def _connect_ollama():
+    """Connect to local Ollama."""
+    console.print("[bold cyan]Connecting to Ollama (Local)[/]")
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    try:
+        req = urllib.request.Request(f"{ollama_url}/api/tags")
+        resp = urllib.request.urlopen(req, timeout=3)
+        data = json.loads(resp.read().decode())
+        models = data.get("models", [])
+    except Exception:
+        console.print("[red]✗ Ollama not running. Start it first:[/]")
+        console.print("[dim]  ollama serve[/]")
+        console.print("[dim]  Or install: https://ollama.com/download[/]\n")
+        return
+
+    if not models:
+        console.print("[yellow]No models found. Pull one:[/]")
+        console.print("[dim]  ollama pull qwen2.5-coder:7b[/]")
+        return
+
+    options = []
+    for m in models:
+        name = m.get("name", "")
+        size = m.get("size", 0)
+        size_str = f"{size // 1073741824}GB" if size > 1073741824 else f"{size // 1048576}MB"
+        options.append({
+            "display": f"[cyan]{name}[/]  [dim]{size_str}[/]",
+            "value": name,
+        })
+
+    result = _fuzzy_select("Select Ollama model:", options, key_func=lambda o: o.get("value", ""))
+    if not result:
+        return
+
+    _set_env_var("AI_PROVIDER", "aurine")
+    _set_env_var("AURINE_NATIVE_MODEL", result)
+    _set_env_var("OLLAMA_BASE_URL", ollama_url)
+
+    console.print(f"\n[green]✓[/] Ollama model: [bold]{result}[/]")
+    console.print("[dim]Restart AuraCode to apply, or type /model to switch.[/]\n")
 
 
 def _set_env_var(key, value):
@@ -895,20 +991,34 @@ def _show_agents():
 def _show_models():
     from app.config import _read_env
     _read_env()
-    table = Table(box=ROUNDED, title="[bold cyan]AI Models[/] [dim]- All latest, high quality[/]", title_style="bold cyan", border_style="cyan", padding=(0, 1))
+    table = Table(box=ROUNDED, title="[bold cyan]AI Models[/] [dim]- Which ones work (have valid keys)[/]", title_style="bold cyan", border_style="cyan", padding=(0, 1))
     table.add_column("Model", style="bold", min_width=32)
     table.add_column("Provider", style="cyan", min_width=12)
-    table.add_column("Tier", min_width=8)
     table.add_column("Free", min_width=5)
-    table.add_column("Key", min_width=8)
+    table.add_column("Works", min_width=8)
+
+    # Add Ollama models first
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        req = urllib.request.Request(f"{ollama_url}/api/tags")
+        resp = urllib.request.urlopen(req, timeout=2)
+        data = json.loads(resp.read().decode())
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            size = m.get("size", 0)
+            size_str = f"{size // 1073741824}GB" if size > 1073741824 else f"{size // 1048576}MB"
+            table.add_row(f"[bright_cyan]{name}[/]  [dim]{size_str}[/]", "ollama", "[green]✓[/]", "[green]✓ local[/]")
+    except Exception:
+        pass
+
+    # Add cloud models
     for m in MODELS:
-        tier_color = "green" if m["tier"] == "fast" else "yellow" if m["tier"] == "balanced" else "red"
         free_mark = "[green]✓[/]" if m["free"] else "[red]✗[/]"
         key_set = bool(os.getenv(m.get("key_env", ""), "")) if m.get("key_env") else False
-        key_mark = "[green]✓[/]" if key_set else "[dim]—[/]"
+        works = "[green]✓[/]" if key_set else "[dim]✗ no key[/]"
         is_active = m["id"] == _state["model"]["id"]
         marker = " [green]◄[/]" if is_active else ""
-        table.add_row(f"[{m['color']}]{m['name']}[/]{marker}", m["provider"], f"[{tier_color}]{m['tier']}[/]", free_mark, key_mark)
+        table.add_row(f"[{m['color']}]{m['name']}[/]{marker}", m["provider"], free_mark, works)
     console.print()
     console.print(table)
     console.print()
@@ -1563,8 +1673,11 @@ def _run_turn(inp, chat_id):
         return
 
     tool_results = ""
+    prov, model, _ = _get_provider_info()
+    prov_label = f"{prov.upper()}" if prov else "?"
+    model_label = model or "?"
     for _ in range(5):
-        with console.status(f"[bold cyan]{_state['agent']['icon']} Thinking...[/]", spinner="dots"):
+        with console.status(f"[bold cyan]{_state['agent']['icon']} {prov_label} {model_label}...[/]", spinner="dots"):
             try:
                 resp = _ask(inp, tool_results, history)
             except Exception as e:
@@ -1572,15 +1685,15 @@ def _run_turn(inp, chat_id):
                 if "429" in err or "quota" in err.lower() or "insufficient_quota" in err.lower() or "rate limit" in err.lower():
                     console.print(f"\n  [red]✗ Quota/Rate Limit Error:[/] {err[:300]}")
                     console.print("  [yellow]Your current provider's quota is exhausted or rate limited.[/]")
-                    console.print("  [dim]Fix: type /connect to switch to a free provider (Google Gemini, Groq, DeepSeek)[/]\n")
+                    console.print("  [dim]Fix: type /connect to switch to Ollama (local/free) or Google Gemini, Groq, DeepSeek[/]\n")
                 elif "400" in err or "401" in err or "403" in err or "Invalid" in err.lower():
                     console.print(f"\n  [red]✗ AI Error:[/] {err[:300]}")
                     console.print("  [yellow]Your API key may be invalid or missing.[/]")
-                    console.print("  [dim]Fix: type /connect to set up a working AI provider[/]\n")
+                    console.print("  [dim]Fix: type /connect to set up Ollama (local/free) or a cloud provider[/]\n")
                 elif "All AI providers failed" in err or "No AI provider" in err or "not available" in err.lower():
                     console.print(f"\n  [red]✗ No working AI provider[/]")
                     console.print("  [yellow]All providers failed. Try a free provider:[/]")
-                    console.print("  [dim]  /connect  - set up Google Gemini, Groq, or DeepSeek (all free)[/]\n")
+                    console.print("  [dim]  /connect  - set up Ollama (local/free), Google Gemini, Groq, or DeepSeek[/]\n")
                 else:
                     console.print(f"\n  [red]✗ error:[/] {err[:500]}\n")
                 return
@@ -1620,13 +1733,24 @@ def _run_turn(inp, chat_id):
 # ============================================================================
 
 def _check_ai_ready():
-    """Check if any cloud provider API key is available."""
+    """Check if any AI provider is available (cloud keys or local Ollama)."""
     from app.config import _read_env
     _read_env()
+    # Check cloud keys
     for key in ["GOOGLE_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]:
         val = os.getenv(key, "").strip()
         if val and len(val) > 5:
             return True
+    # Check local Ollama
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+    try:
+        req = urllib.request.Request(f"{ollama_url}/api/tags")
+        resp = urllib.request.urlopen(req, timeout=2)
+        data = json.loads(resp.read().decode())
+        if data.get("models"):
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -1692,14 +1816,20 @@ def _print_header():
     model_info = _state["model"]
     session = _state.get("session_name") or _state.get("chat_id", "")[:12] if _state.get("chat_id") else "new"
 
+    # Build provider/model display like OpenCode
+    prov_display = prov.upper() if prov else "?"
+    model_display = model_info.get("name", model or "?")
+    model_id_display = model or model_info.get("id", "unknown")
+
     header = Table(box=ROUNDED, border_style="cyan", padding=(0, 1), show_header=False)
     header.add_column("Content", ratio=1)
-    header.add_row("[bold cyan]AuraCode[/]  [dim]v2.0[/]")
-    header.add_row("[dim]OpenCode-style terminal coding agent[/]")
-    header.add_row(f"[dim]Agent:[/] {agent['icon']} [bold]{agent['name']}[/]  [dim]Model:[/] {model_info['name']}  [dim]Provider:[/] {prov}")
+    header.add_row("[bold cyan]AuraCode[/]  [dim]v3.0[/]")
+    header.add_row(f"[dim]{agent['icon']} {agent['name']}[/]  [bold]{model_display}[/]  [dim]({prov_display} | {model_id_display})[/]")
     header.add_row(f"[dim]Session:[/] [cyan]{session}[/]  [dim]Workspace:[/] {WORKSPACE.name}")
     if not has_key:
-        header.add_row("[yellow]![/] [dim]No API key - type /connect to set up (free Google key)[/]")
+        header.add_row("[yellow]![/] [dim]No AI connected - type /connect to set up[/]")
+    elif prov == "ollama":
+        header.add_row("[green]✓[/] [dim]Local Ollama active - FREE, no API key needed[/]")
 
     console.print()
     console.print(header)
@@ -1725,11 +1855,10 @@ def main():
     # Auto-setup: check if any AI provider is configured
     if not _check_ai_ready():
         console.print("[yellow]No AI provider configured![/]")
-        console.print("[dim]Set GOOGLE_API_KEY or OPENAI_API_KEY in .env[/]\n")
         console.print("[cyan]Quick setup:[/]")
-        console.print("[dim]  1. Get free key: https://aistudio.google.com/app/apikey[/]")
-        console.print("[dim]  2. Add to .env: GOOGLE_API_KEY=your_key[/]")
-        console.print("[dim]  3. Restart AuraCode[/]\n")
+        console.print("[dim]  1. Local (free, offline): ollama pull qwen2.5-coder:7b[/]")
+        console.print("[dim]  2. Cloud (free): Get Google Gemini key → https://aistudio.google.com/app/apikey[/]")
+        console.print("[dim]  3. Type /connect to set up interactively[/]\n")
 
     while True:
         try:
