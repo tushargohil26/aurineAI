@@ -196,6 +196,9 @@ def db_connection() -> sqlite3.Connection:
         connection.execute("ALTER TABLE chats ADD COLUMN agent_mode TEXT NOT NULL DEFAULT ''")
     if "model_config" not in chat_columns:
         connection.execute("ALTER TABLE chats ADD COLUMN model_config TEXT NOT NULL DEFAULT '{}'")
+    if "user_id" not in chat_columns:
+        connection.execute("ALTER TABLE chats ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_chats_user ON chats(user_id)")
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS chat_messages (
@@ -318,12 +321,17 @@ def utc_now() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
 
-def ensure_chat(chat_id: str | None, title_seed: str = "New chat", agent_mode: str = "") -> str:
+def ensure_chat(chat_id: str | None, title_seed: str = "New chat", agent_mode: str = "", user_id: str = "") -> str:
     now = utc_now()
     with db_connection() as connection:
         if chat_id:
-            row = connection.execute("SELECT id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            row = connection.execute("SELECT id, user_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
             if row:
+                owner = row["user_id"] or ""
+                if owner and user_id and owner != user_id:
+                    raise PermissionError("Chat does not belong to this user.")
+                if not owner and user_id:
+                    connection.execute("UPDATE chats SET user_id = ? WHERE id = ?", (user_id, chat_id))
                 if agent_mode:
                     connection.execute(
                         "UPDATE chats SET agent_mode = ?, updated_at = ? WHERE id = ?",
@@ -334,8 +342,8 @@ def ensure_chat(chat_id: str | None, title_seed: str = "New chat", agent_mode: s
         new_id = uuid4().hex
         title = (title_seed.strip() or "New chat")[:48]
         connection.execute(
-            "INSERT INTO chats (id, title, agent_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (new_id, title, agent_mode[:80], now, now),
+            "INSERT INTO chats (id, title, agent_mode, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (new_id, title, agent_mode[:80], now, now, user_id),
         )
         return new_id
 
@@ -496,6 +504,11 @@ def require_api_user(authorization: str | None) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="Invalid Aurine API key.")
     return user
+
+
+def any_user(authorization: str | None) -> dict | None:
+    """Resolve a user from either a session token or an API key. Returns None if unauthenticated."""
+    return auth_user(authorization) or api_user_from_key(authorization)
 
 
 def get_client_ip(request: Request) -> str:
@@ -672,49 +685,12 @@ def login(request: AuthRequest, req: Request) -> dict:
 
 @app.post("/auth/demo")
 def demo_login() -> dict:
-    email = "demo@Aurine.local"
-    name = "Aurine User"
-    with db_connection() as connection:
-        row = connection.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-        if row:
-            user_id = row["id"]
-            connection.execute("UPDATE users SET name = ?, provider = 'demo' WHERE id = ?", (name, user_id))
-        else:
-            user_id = uuid4().hex
-            connection.execute(
-                "INSERT INTO users (id, name, email, password_hash, provider, created_at) VALUES (?, ?, ?, '', 'demo', ?)",
-                (user_id, name, email, utc_now()),
-            )
-        connection.execute(
-            """
-            INSERT INTO workspace_settings (user_id, workspace_name, theme, updated_at)
-            VALUES (?, 'Aurine', 'aurora-3d', ?)
-            ON CONFLICT(user_id) DO UPDATE SET workspace_name = 'Aurine',
-            theme = 'aurora-3d', updated_at = excluded.updated_at
-            """,
-            (user_id, utc_now()),
-        )
-    token = create_session(user_id)
-    return {"token": token, **public_profile({"id": user_id, "name": name, "email": email, "provider": "demo"})}
+    raise HTTPException(status_code=403, detail="Demo login is disabled. Please sign in with your email and password.")
 
 
 @app.post("/auth/google/demo")
 def google_demo_login() -> dict:
-    email = "google.user@aurine.local"
-    name = "Google User"
-    with db_connection() as connection:
-        row = connection.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-        if row:
-            user_id = row["id"]
-            connection.execute("UPDATE users SET name = ?, provider = 'google-demo' WHERE id = ?", (name, user_id))
-        else:
-            user_id = uuid4().hex
-            connection.execute(
-                "INSERT INTO users (id, name, email, password_hash, provider, created_at) VALUES (?, ?, ?, '', 'google-demo', ?)",
-                (user_id, name, email, utc_now()),
-            )
-    token = create_session(user_id)
-    return {"token": token, **public_profile({"id": user_id, "name": name, "email": email, "provider": "google-demo"})}
+    raise HTTPException(status_code=403, detail="Demo login is disabled. Please sign in with your email and password.")
 
 
 @app.get("/auth/google/start")
@@ -856,7 +832,8 @@ def openai_models(authorization: str | None = Header(default=None)) -> dict:
 
 @app.post("/v1/chat/completions")
 def openai_chat_completions(request: OpenAIChatCompletionRequest, authorization: str | None = Header(default=None)):
-    require_api_user(authorization)
+    user = require_api_user(authorization)
+    user_id = user["id"]
     valid_messages = [
         {"role": item.get("role"), "content": str(item.get("content", "")).strip()}
         for item in request.messages
@@ -872,14 +849,14 @@ def openai_chat_completions(request: OpenAIChatCompletionRequest, authorization:
     if request.stream:
         def generate_stream():
             full_response = ""
-            for chunk in answer_question_stream(question, history, model_config):
+            for chunk in answer_question_stream(question, history, model_config, user_id=user_id):
                 full_response += chunk
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': chunk}, 'index': 0}]})}\n\n"
             yield f"data: {json.dumps({'choices': [{'delta': {}, 'finish_reason': 'stop', 'index': 0}]})}\n\n"
             yield "data: [DONE]\n\n"
         return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
-    answer = answer_question(question, history, model_config)
+    answer = answer_question(question, history, model_config, user_id=user_id)
     return {
         "id": f"chatcmpl-{uuid4().hex}",
         "object": "chat.completion",
@@ -891,13 +868,26 @@ def openai_chat_completions(request: OpenAIChatCompletionRequest, authorization:
 
 
 @app.get("/search")
-def search(q: str = "") -> dict:
+def search(q: str = "", authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    user_id = user["id"]
     needle = q.strip().lower()
     with db_connection() as connection:
-        chat_rows = connection.execute("SELECT id, title, updated_at FROM chats ORDER BY updated_at DESC").fetchall()
-        message_rows = connection.execute("SELECT chat_id, role, content, created_at FROM chat_messages ORDER BY created_at DESC").fetchall()
+        chat_rows = connection.execute(
+            "SELECT id, title, updated_at FROM chats WHERE user_id = ? ORDER BY updated_at DESC",
+            (user_id,),
+        ).fetchall()
+        chat_ids = [row["id"] for row in chat_rows]
+        if chat_ids:
+            placeholders = ",".join("?" for _ in chat_ids)
+            message_rows = connection.execute(
+                f"SELECT chat_id, role, content, created_at FROM chat_messages WHERE chat_id IN ({placeholders}) ORDER BY created_at DESC",
+                chat_ids,
+            ).fetchall()
+        else:
+            message_rows = []
     projects = list_projects()
-    docs = list_documents()
+    docs = list_documents(user_id)
     if needle:
         chat_rows = [row for row in chat_rows if needle in row["title"].lower()]
         message_rows = [row for row in message_rows if needle in row["content"].lower()]
@@ -1105,7 +1095,7 @@ def launch_aura(authorization: str | None = Header(default=None)) -> dict:
 
 @app.post("/plugins/action")
 def plugin_action(request: PluginActionRequest, authorization: str | None = Header(default=None)) -> dict:
-    require_user(authorization)
+    user = require_user(authorization)
     pid = request.plugin_id.strip().lower()
     action = request.action.strip().lower()
     params = request.params or {}
@@ -1148,7 +1138,7 @@ def plugin_action(request: PluginActionRequest, authorization: str | None = Head
 
     # --- Documents Plugin ---
     if pid == "documents":
-        return _documents_plugin_action(action, params)
+        return _documents_plugin_action(action, params, user["id"])
 
     # --- Media Creator Plugin ---
     if pid == "media":
@@ -1719,10 +1709,10 @@ def _database_plugin_action(action: str, params: dict) -> dict:
 # Documents Plugin
 # ---------------------------------------------------------------------------
 
-def _documents_plugin_action(action: str, params: dict) -> dict:
+def _documents_plugin_action(action: str, params: dict, user_id: str = "") -> dict:
     if action == "list":
         from .rag import list_documents
-        docs = list_documents()
+        docs = list_documents(user_id)
         if docs:
             lines = [f"- {d['source']}: {d['chunks']} chunks" for d in docs]
             return {"output": "\n".join(lines), "action": "list"}
@@ -1732,7 +1722,7 @@ def _documents_plugin_action(action: str, params: dict) -> dict:
         if not query:
             return {"output": "Search query required.", "action": "search"}
         from .rag import retrieve_context
-        context, sources = retrieve_context(query, limit=5)
+        context, sources = retrieve_context(query, limit=5, user_id=user_id)
         if not context:
             return {"output": "No matching documents found.", "action": "search"}
         return {"output": f"Found {len(sources)} chunks:\n{context[:5000]}", "action": "search"}
@@ -1740,10 +1730,10 @@ def _documents_plugin_action(action: str, params: dict) -> dict:
         settings = get_settings()
         import sqlite3
         conn = sqlite3.connect(str(settings.vector_db))
-        conn.execute("DELETE FROM chunks")
+        conn.execute("DELETE FROM chunks WHERE user_id = ?", (user_id,))
         conn.commit()
         conn.close()
-        return {"output": "All document chunks deleted.", "action": "delete"}
+        return {"output": "Your uploaded document chunks deleted.", "action": "delete"}
     elif action == "upload":
         name = params.get("name", "document")
         content = params.get("content", "")
@@ -1753,8 +1743,8 @@ def _documents_plugin_action(action: str, params: dict) -> dict:
         conn = rag_conn()
         chunks = [content[i:i+500] for i in range(0, len(content), 500)]
         for i, chunk in enumerate(chunks):
-            conn.execute("INSERT INTO chunks (source, chunk_index, content, embedding) VALUES (?, ?, ?, ?)",
-                         (name, i, chunk, json.dumps([0.0] * 10)))
+            conn.execute("INSERT INTO chunks (source, chunk_index, content, embedding, user_id) VALUES (?, ?, ?, ?, ?)",
+                         (name, i, chunk, json.dumps([0.0] * 10), user_id))
         conn.commit()
         conn.close()
         return {"output": f"Uploaded '{name}' ({len(chunks)} chunks).", "action": "upload"}
@@ -2184,41 +2174,53 @@ def sites() -> dict:
 
 
 @app.post("/clear-data")
-def clear_data() -> dict:
+def clear_data(authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    user_id = user["id"]
     settings = get_settings()
     with db_connection() as connection:
-        for table in ["chat_messages", "chats", "chunks", "scheduled_items", "plugin_settings"]:
-            connection.execute(f"DELETE FROM {table}")
+        chat_rows = connection.execute("SELECT id FROM chats WHERE user_id = ?", (user_id,)).fetchall()
+        chat_ids = [row["id"] for row in chat_rows]
+        for chat_id in chat_ids:
+            connection.execute("DELETE FROM chat_messages WHERE chat_id = ?", (chat_id,))
+        connection.execute("DELETE FROM chats WHERE user_id = ?", (user_id,))
+        connection.execute("DELETE FROM scheduled_items WHERE user_id = ?", (user_id,))
+        connection.execute("DELETE FROM plugin_settings WHERE user_id = ?", (user_id,))
+    doc_sources = [doc["source"] for doc in list_documents(user_id)]
     if settings.data_dir.exists():
         for path in settings.data_dir.iterdir():
-            if path.name != ".gitkeep":
-                if path.is_dir():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
-    if settings.generated_projects_dir.exists():
-        for path in settings.generated_projects_dir.iterdir():
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
+            if path.name in doc_sources:
+                path.unlink(missing_ok=True)
+    from .rag import get_connection as vector_connection
+    with vector_connection() as connection:
+        connection.execute("DELETE FROM chunks WHERE user_id = ?", (user_id,))
     return {"ok": True}
 
 
 @app.get("/documents")
-def documents() -> dict:
-    return {"documents": list_documents()}
+def documents(authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    return {"documents": list_documents(user["id"])}
 
 
 @app.get("/chats")
-def chats() -> dict:
+def chats(authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    user_id = user["id"]
     with db_connection() as connection:
         chat_rows = connection.execute(
-            "SELECT id, title, agent_mode, created_at, updated_at FROM chats ORDER BY updated_at DESC"
+            "SELECT id, title, agent_mode, created_at, updated_at FROM chats WHERE user_id = ? ORDER BY updated_at DESC",
+            (user_id,),
         ).fetchall()
-        message_rows = connection.execute(
-            "SELECT chat_id, role, content, sources, created_at FROM chat_messages ORDER BY created_at ASC"
-        ).fetchall()
+        chat_ids = [row["id"] for row in chat_rows]
+        if chat_ids:
+            placeholders = ",".join("?" for _ in chat_ids)
+            message_rows = connection.execute(
+                f"SELECT chat_id, role, content, sources, created_at FROM chat_messages WHERE chat_id IN ({placeholders}) ORDER BY created_at ASC",
+                chat_ids,
+            ).fetchall()
+        else:
+            message_rows = []
 
     grouped: dict[str, list[dict]] = {}
     for row in message_rows:
@@ -2253,9 +2255,13 @@ def chats() -> dict:
 
 
 @app.post("/chats")
-def create_chat(request: ChatCreateRequest = Body(default_factory=ChatCreateRequest)) -> dict:
+def create_chat(
+    request: ChatCreateRequest = Body(default_factory=ChatCreateRequest),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    user = require_user(authorization)
     title = request.title.strip() or "New chat"
-    chat_id = ensure_chat(None, title, request.agent_mode.strip())
+    chat_id = ensure_chat(None, title, request.agent_mode.strip(), user["id"])
     return {"chat": {"id": chat_id, "title": title[:48], "agentMode": request.agent_mode.strip()[:80], "messages": [], "createdAt": utc_now()}}
 
 
@@ -2410,7 +2416,8 @@ def run_code_project_command(project_id: str, request: CommandRequest) -> dict:
 
 
 @app.post("/upload")
-async def upload_document(file: UploadFile = File(...)) -> dict:
+async def upload_document(file: UploadFile = File(...), authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2431,7 +2438,7 @@ async def upload_document(file: UploadFile = File(...)) -> dict:
     target.write_bytes(await file.read())
 
     try:
-        chunks = ingest_file(target)
+        chunks = ingest_file(target, user["id"])
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -2458,7 +2465,7 @@ def get_model_config() -> dict:
 # Core Chat Engine with Agent Routing, Reasoning, Memory, and Tool Calling
 # ---------------------------------------------------------------------------
 
-def answer_question_stream(question: str, history: list[dict] | None = None, model_config: dict | None = None):
+def answer_question_stream(question: str, history: list[dict] | None = None, model_config: dict | None = None, user_id: str | None = None):
     from .rag import quick_language_response, retrieve_context, detect_response_language, visible_user_task
     settings = get_settings()
     quick_answer = quick_language_response(question)
@@ -2466,13 +2473,13 @@ def answer_question_stream(question: str, history: list[dict] | None = None, mod
         yield quick_answer
         return
 
-    context, sources = retrieve_context(question)
+    context, sources = retrieve_context(question, user_id=user_id or "")
     history = history or []
 
     agent_id = classify_query(question)
     agent = get_agent(agent_id)
 
-    user_id = get_user_id()
+    user_id = user_id or get_user_id()
     memory = memory_store.get(user_id)
     memory_context = ""
     if settings.memory_enabled:
@@ -2527,7 +2534,7 @@ def answer_question_stream(question: str, history: list[dict] | None = None, mod
 
 
 @app.post("/chat")
-def chat(request: ChatRequest, req: Request) -> dict:
+def chat(request: ChatRequest, req: Request, authorization: str | None = Header(default=None)) -> dict:
     question = request.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question is required.")
@@ -2536,10 +2543,12 @@ def chat(request: ChatRequest, req: Request) -> dict:
     logger.info(f"Chat request from {client_ip}: {question[:100]}...")
 
     settings = get_settings()
+    user = any_user(authorization)
+    user_id = (user["id"] if user else None) or request.user_id or get_user_id()
 
     try:
         display_question = (request.user_text or question.split("User task:", 1)[-1]).strip()
-        chat_id = ensure_chat(request.chat_id, display_question, request.agent_mode.strip())
+        chat_id = ensure_chat(request.chat_id, display_question, request.agent_mode.strip(), user_id)
         add_chat_message(chat_id, "user", display_question)
         model_config = {
             "provider": request.model_provider,
@@ -2554,13 +2563,12 @@ def chat(request: ChatRequest, req: Request) -> dict:
             add_chat_message(chat_id, "assistant", quick_answer)
             return {"answer": quick_answer, "sources": [], "chat_id": chat_id}
 
-        context, sources = retrieve_context(question)
+        context, sources = retrieve_context(question, user_id=user_id)
         history = request.history or []
 
         agent_id = request.agent_mode.strip() or classify_query(question)
         agent = get_agent(agent_id)
 
-        user_id = request.user_id or get_user_id()
         memory = memory_store.get(user_id)
         memory_context = ""
         if settings.memory_enabled:
@@ -2615,7 +2623,7 @@ def chat(request: ChatRequest, req: Request) -> dict:
             result = chat_with_tools(
                 messages=messages,
                 tools=tool_defs,
-                tool_executor=execute_tool,
+                tool_executor=lambda tool_name, arguments: execute_tool(tool_name, arguments, user_id),
                 temperature=agent.temperature if agent else 0.2,
                 model_config=model_config,
                 max_iterations=settings.max_tool_iterations,
@@ -2660,7 +2668,7 @@ def chat(request: ChatRequest, req: Request) -> dict:
 
 
 @app.post("/chat/stream")
-def chat_stream(request: ChatRequest, req: Request):
+def chat_stream(request: ChatRequest, req: Request, authorization: str | None = Header(default=None)):
     question = request.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question is required.")
@@ -2668,8 +2676,11 @@ def chat_stream(request: ChatRequest, req: Request):
     client_ip = get_client_ip(req)
     logger.info(f"Stream request from {client_ip}: {question[:100]}...")
 
+    user = any_user(authorization)
+    user_id = (user["id"] if user else None) or request.user_id or get_user_id()
+
     display_question = (request.user_text or question.split("User task:", 1)[-1]).strip()
-    chat_id = ensure_chat(request.chat_id, display_question, request.agent_mode.strip())
+    chat_id = ensure_chat(request.chat_id, display_question, request.agent_mode.strip(), user_id)
     add_chat_message(chat_id, "user", display_question)
 
     model_config = {
@@ -2682,7 +2693,7 @@ def chat_stream(request: ChatRequest, req: Request):
     def generate():
         full_response = ""
         try:
-            for chunk in answer_question_stream(question, request.history, model_config):
+            for chunk in answer_question_stream(question, request.history, model_config, user_id=user_id):
                 full_response += chunk
                 yield f"data: {json.dumps({'chunk': chunk, 'chat_id': chat_id})}\n\n"
         except Exception as exc:
@@ -2712,7 +2723,10 @@ def tools_execute(request: Request, body: dict = Body(...)) -> dict:
 
 
 @app.get("/memory/{user_id}")
-def get_memory(user_id: str) -> dict:
+def get_memory(user_id: str, authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    if user["id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not allowed to view this user's memory.")
     memory = memory_store.get(user_id)
     return {
         "facts": memory.recall_facts(limit=30),

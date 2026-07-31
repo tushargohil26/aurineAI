@@ -5,7 +5,6 @@ const loginScreen = q("#loginScreen");
 const appShell = q("#appShell");
 const loginForm = q("#loginForm");
 const loginStatus = q("#loginStatus");
-const demoLoginButton = q("#demoLoginButton");
 const googleLoginButton = q("#googleLoginButton");
 const loginName = q("#loginName");
 const loginEmail = q("#loginEmail");
@@ -2400,31 +2399,11 @@ googleLoginButton.onclick = async () => {
   try {
     const status = await api("/auth/google/status");
     if (!status.configured) {
-      loginStatus.textContent = "Opening Google demo workspace...";
-      const data = await api("/auth/google/demo", { method: "POST" });
-      authToken = data.token;
-      localStorage.setItem(tokenKey, authToken);
-      applyProfile(data);
-      showApp();
-      await loadChats();
+      loginStatus.textContent = "Google login is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env, then restart the server.";
       return;
     }
     loginStatus.textContent = `Opening Google. In Google Cloud, Authorized redirect URI must be: ${status.authorized_redirect_uri || status.redirect_uri}`;
     location.href = "/auth/google/start";
-  } catch (error) {
-    loginStatus.textContent = error.message;
-  }
-};
-
-demoLoginButton.onclick = async () => {
-  loginStatus.textContent = "Opening demo workspace...";
-  try {
-    const data = await api("/auth/demo", { method: "POST" });
-    authToken = data.token;
-    localStorage.setItem(tokenKey, authToken);
-    applyProfile(data);
-    showApp();
-    await loadChats();
   } catch (error) {
     loginStatus.textContent = error.message;
   }

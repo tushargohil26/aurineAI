@@ -401,3 +401,71 @@ def get_active_provider():
             model = settings.anthropic_chat_model
         return name, model
     return "none", "none"
+
+
+def _local_embedding(text: str, dims: int = 256) -> list[float]:
+    """Deterministic offline embedding so RAG keeps working without any AI provider."""
+    import hashlib
+    import math
+    import re as _re
+    vec = [0.0] * dims
+    words = _re.findall(r"[A-Za-z0-9\u0900-\u097F\u0A80-\u0AFF]+", text.lower())
+    for word in words:
+        digest = hashlib.md5(word.encode("utf-8")).hexdigest()
+        index = int(digest[:8], 16) % dims
+        sign = 1.0 if int(digest[8:16], 16) % 2 else -1.0
+        vec[index] += sign
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm:
+        vec = [v / norm for v in vec]
+    return vec
+
+
+def embed_texts(texts) -> list[list[float]]:
+    """Embed a list of texts for RAG. Uses Ollama embeddings when available,
+    otherwise falls back to a deterministic local embedding (never crashes)."""
+    text_list = [str(t) for t in texts]
+    if not text_list:
+        return []
+    settings = get_settings()
+    model = (settings.ollama_embedding_model or settings.aurine_embedding_model or "nomic-embed-text").strip()
+    base_url = (settings.ollama_base_url or "http://127.0.0.1:11434").strip().rstrip("/")
+
+    # Ollama modern endpoint (batch)
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/api/embed",
+            data=json.dumps({"model": model, "input": text_list}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        embeddings = data.get("embeddings")
+        if embeddings and len(embeddings) == len(text_list):
+            return [[float(x) for x in e] for e in embeddings]
+    except Exception:
+        pass
+
+    # Ollama legacy endpoint (single prompt)
+    try:
+        out = []
+        for text in text_list:
+            req = urllib.request.Request(
+                f"{base_url}/api/embeddings",
+                data=json.dumps({"model": model, "prompt": text}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            emb = data.get("embedding")
+            if not emb:
+                raise ValueError("no embedding")
+            out.append([float(x) for x in emb])
+        if len(out) == len(text_list):
+            return out
+    except Exception:
+        pass
+
+    return [_local_embedding(t) for t in text_list]

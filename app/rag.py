@@ -16,6 +16,7 @@ from .llm import chat_completion, embed_texts as llm_embed_texts
 def get_connection() -> sqlite3.Connection:
     settings = get_settings()
     connection = sqlite3.connect(settings.vector_db)
+    connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute(
         """
@@ -29,7 +30,10 @@ def get_connection() -> sqlite3.Connection:
         )
         """
     )
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)")
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(chunks)").fetchall()}
+    if "user_id" not in columns:
+        connection.execute("ALTER TABLE chunks ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_chunks_user_source ON chunks(user_id, source)")
     return connection
 
 
@@ -151,7 +155,7 @@ def embed_texts(texts: Iterable[str]) -> list[list[float]]:
     return llm_embed_texts(list(texts))
 
 
-def ingest_file(path: Path) -> int:
+def ingest_file(path: Path, user_id: str = "") -> int:
     text = read_document(path)
     chunks = chunk_text(text)
     if not chunks:
@@ -159,29 +163,31 @@ def ingest_file(path: Path) -> int:
 
     embeddings = embed_texts(chunks)
     with get_connection() as connection:
-        connection.execute("DELETE FROM chunks WHERE source = ?", (path.name,))
+        connection.execute("DELETE FROM chunks WHERE source = ? AND user_id = ?", (path.name, user_id))
         connection.executemany(
             """
-            INSERT INTO chunks (source, chunk_index, content, embedding, tokens)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO chunks (source, chunk_index, content, embedding, tokens, user_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
-                (path.name, index, chunk, json.dumps(embeddings[index]), len(chunk.split()))
+                (path.name, index, chunk, json.dumps(embeddings[index]), len(chunk.split()), user_id)
                 for index, chunk in enumerate(chunks)
             ],
         )
     return len(chunks)
 
 
-def list_documents() -> list[dict]:
+def list_documents(user_id: str = "") -> list[dict]:
     with get_connection() as connection:
         rows = connection.execute(
             """
             SELECT source, COUNT(*) AS chunks, SUM(tokens) as total_tokens
             FROM chunks
+            WHERE user_id = ?
             GROUP BY source
             ORDER BY source
-            """
+            """,
+            (user_id,),
         ).fetchall()
     return [{"source": source, "chunks": chunks, "tokens": total_tokens or 0} for source, chunks, total_tokens in rows]
 
@@ -227,10 +233,11 @@ def _bm25_like_score(query: str, content: str, avg_dl: float = 500.0) -> float:
     return score
 
 
-def retrieve_context(question: str, limit: int = 5) -> tuple[str, list[dict]]:
+def retrieve_context(question: str, limit: int = 5, user_id: str = "") -> tuple[str, list[dict]]:
     with get_connection() as connection:
         rows = connection.execute(
-            "SELECT source, chunk_index, content, embedding FROM chunks"
+            "SELECT source, chunk_index, content, embedding FROM chunks WHERE user_id = ?",
+            (user_id,),
         ).fetchall()
 
     if not rows:
@@ -386,12 +393,12 @@ def detect_response_language(text: str) -> str:
     return "English"
 
 
-def answer_question(question: str, history: list[dict] | None = None, model_config: dict | None = None) -> dict:
+def answer_question(question: str, history: list[dict] | None = None, model_config: dict | None = None, user_id: str = "") -> dict:
     quick_answer = quick_language_response(question)
     if quick_answer:
         return {"answer": quick_answer, "sources": []}
 
-    context, sources = retrieve_context(question)
+    context, sources = retrieve_context(question, user_id=user_id)
     history = history or []
 
     system_prompt = (

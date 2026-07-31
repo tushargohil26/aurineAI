@@ -979,10 +979,10 @@ def execute_json_transform(data: str, operation: str, query: str = "") -> str:
         return f"Invalid JSON: {exc}"
 
 
-def _search_documents_tool(query: str) -> str:
+def _search_documents_tool(query: str, user_id: str = "") -> str:
     try:
         from .rag import retrieve_context
-        context, sources = retrieve_context(query, limit=5)
+        context, sources = retrieve_context(query, limit=5, user_id=user_id)
         if not context:
             return "No uploaded documents found. Upload files via the File upload button first."
         parts = []
@@ -1029,7 +1029,9 @@ TOOL_EXECUTORS = {
 }
 
 
-def execute_tool(tool_name: str, arguments: dict) -> str:
+def execute_tool(tool_name: str, arguments: dict, user_id: str = "") -> str:
+    if tool_name == "search_documents":
+        return _search_documents_tool(arguments.get("query", ""), user_id)
     executor = TOOL_EXECUTORS.get(tool_name)
     if not executor:
         return f"Unknown tool: {tool_name}"
