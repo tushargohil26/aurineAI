@@ -60,6 +60,13 @@ AGENTS = [
 
 def _load_ai():
     global _HAS_AI, _HAS_CFG, _AI_LOAD_ERROR
+    global chat_completion, chat_completion_stream
+    global get_device_id, get_user_id, get_device_name
+    global store_chat_message, get_chat_history, get_all_chats
+    global store_fact, recall_facts, store_preference, get_preferences
+    global learn_pattern, get_learned_patterns
+    global build_memory_context, extract_facts_from_message
+    global get_data_dir, get_chats_dir
     if _HAS_AI:
         return
     try:
@@ -82,6 +89,56 @@ def _load_ai():
             _AI_LOAD_ERROR = "app.device module failed to load. Memory/history disabled."
         except Exception as e2:
             _AI_LOAD_ERROR += f" | llm: {type(e2).__name__}: {e2}"
+        if "_HAS_AI" in globals() and _HAS_AI:
+            from uuid import uuid4
+
+            def get_device_id() -> str:
+                return uuid4().hex
+
+            def get_user_id() -> str:
+                return "default"
+
+            def get_device_name() -> str:
+                return "Aurine Device"
+
+            def get_data_dir() -> Path:
+                return Path.cwd()
+
+            def get_chats_dir() -> Path:
+                return Path.cwd() / "chats"
+
+            def store_chat_message(*args, **kwargs):  # noqa: ANN002, ANN003
+                return None
+
+            def get_chat_history(*args, **kwargs):  # noqa: ANN002, ANN003
+                return []
+
+            def get_all_chats(*args, **kwargs):  # noqa: ANN002, ANN003
+                return []
+
+            def store_fact(*args, **kwargs):  # noqa: ANN002, ANN003
+                return None
+
+            def recall_facts(*args, **kwargs):  # noqa: ANN002, ANN003
+                return []
+
+            def store_preference(*args, **kwargs):  # noqa: ANN002, ANN003
+                return None
+
+            def get_preferences(*args, **kwargs):  # noqa: ANN002, ANN003
+                return {}
+
+            def learn_pattern(*args, **kwargs):  # noqa: ANN002, ANN003
+                return None
+
+            def get_learned_patterns(*args, **kwargs):  # noqa: ANN002, ANN003
+                return []
+
+            def build_memory_context(*args, **kwargs):  # noqa: ANN002, ANN003
+                return ""
+
+            def extract_facts_from_message(*args, **kwargs):  # noqa: ANN002, ANN003
+                return None
     try:
         from app.config import get_settings
         _HAS_CFG = True
