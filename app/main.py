@@ -51,6 +51,32 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("aurine")
 
 
+CODE_X_SYSTEM_PROMPT = (
+    "You are Aurine, a senior AI software engineer and all-around assistant. You operate at the level of a "
+    "principal engineer: precise, thorough, and pragmatic.\n\n"
+    "BEHAVIOR\n"
+    "- Reason step by step before answering; show your working when it helps the user learn.\n"
+    "- Give complete, correct, production-ready implementations — not stubs or placeholders.\n"
+    "- Think about edge cases, error handling, security, and performance, and address them proactively.\n"
+    "- When the user asks to build/create something (website, app, script, file, PDF, folder), produce the full "
+    "result, not just an outline.\n"
+    "- If a request is ambiguous, state your assumption in one line, then deliver the best solution for it.\n"
+    "- Verify your own answer mentally for correctness before replying. Never invent APIs that do not exist.\n\n"
+    "TOOLS\n"
+    "You have access to real tools: web search, weather, code execution, file read/write, command execution, "
+    "image/PDF/document/zip creation, math, and searching uploaded documents. Use them whenever they would make "
+    "the answer more accurate or actually get the job done.\n\n"
+    "LANGUAGE\n"
+    "- Understand Hindi, Hinglish, English, Gujarati, Marathi, mixed-language prompts, and spelling mistakes by "
+    "inferring intent.\n"
+    "- Reply in the same language and tone as the user's latest message unless they ask for translation.\n\n"
+    "FORMAT\n"
+    "- Be concise and direct. Prefer short paragraphs and lists over walls of text.\n"
+    "- Use fenced code blocks with the correct language tag for any code.\n"
+    "- When you create real files, report the saved file paths and how to open them."
+)
+
+
 rate_limit_store: dict[str, list[float]] = {}
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX_REQUESTS = 30
@@ -364,6 +390,21 @@ def db_connection() -> sqlite3.Connection:
         )
         """
     )
+    user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()}
+    if "verified" not in user_columns:
+        connection.execute("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_otps (
+            email TEXT NOT NULL,
+            code TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (email)
+        )
+        """
+    )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS sessions (
@@ -536,6 +577,94 @@ def verify_password(password: str, stored: str) -> bool:
     except ValueError:
         return False
     return hashlib.sha256(f"{salt}:{password}".encode("utf-8")).hexdigest() == digest
+
+
+def generate_otp() -> str:
+    return f"{secrets.randbelow(10 ** 6):06d}"
+
+
+def otp_store(email: str, code: str, ttl_seconds: int = 600) -> None:
+    now = datetime.utcnow()
+    with db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO email_otps (email, code, created_at, expires_at, attempts)
+            VALUES (?, ?, ?, ?, 0)
+            ON CONFLICT(email) DO UPDATE SET
+                code = excluded.code,
+                created_at = excluded.created_at,
+                expires_at = excluded.expires_at,
+                attempts = 0
+            """,
+            (email, code, now.isoformat() + "Z", (now + timedelta(seconds=ttl_seconds)).isoformat() + "Z"),
+        )
+
+
+def otp_verify(email: str, code: str) -> bool:
+    with db_connection() as connection:
+        row = connection.execute(
+            "SELECT code, expires_at, attempts FROM email_otps WHERE email = ?",
+            (email,),
+        ).fetchone()
+        if not row:
+            return False
+        if row["attempts"] >= 5:
+            connection.execute("DELETE FROM email_otps WHERE email = ?", (email,))
+            return False
+        connection.execute("UPDATE email_otps SET attempts = attempts + 1 WHERE email = ?", (email,))
+        try:
+            expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+            expired = datetime.utcnow().replace(tzinfo=None) > expires.replace(tzinfo=None)
+        except Exception:
+            expired = True
+        if expired:
+            connection.execute("DELETE FROM email_otps WHERE email = ?", (email,))
+            return False
+        if secrets.compare_digest(str(row["code"]), str(code)):
+            connection.execute("DELETE FROM email_otps WHERE email = ?", (email,))
+            return True
+    return False
+
+
+def send_otp_email(email: str, code: str) -> dict:
+    """Send a 6-digit OTP by email when SMTP is configured.
+    Otherwise write it to the local console/log and return dev_mode=True."""
+    settings = get_settings()
+    if settings.email_smtp_host:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            message = MIMEText(
+                f"Aurine login code\n\nYour one-time verification code is:\n\n  {code}\n\n"
+                "This code expires in 10 minutes. Do not share it with anyone.\n\n- Aurine",
+                "plain",
+                "utf-8",
+            )
+            message["Subject"] = "Aurine: your login code"
+            message["From"] = settings.email_from
+            message["To"] = email
+            with smtplib.SMTP(settings.email_smtp_host, settings.email_smtp_port, timeout=20) as server:
+                server.ehlo()
+                if settings.email_smtp_port == 587:
+                    server.starttls()
+                    server.ehlo()
+                if settings.email_smtp_user:
+                    server.login(settings.email_smtp_user, settings.email_smtp_password)
+                server.send_message(message)
+            return {"sent": True, "dev_mode": False}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"OTP email failed for {email}: {exc}")
+            return {"sent": False, "dev_mode": True, "error": str(exc)}
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        log_path = settings.data_dir / "otp_codes.log"
+        with open(log_path, "a", encoding="utf-8") as handle:
+            handle.write(f"{utc_now()} OTP for {email}: {code}\n")
+        logger.info(f"OTP for {email}: {code} (logged to {log_path})")
+        return {"sent": True, "dev_mode": True, "log": str(log_path)}
+    except Exception as exc:  # noqa: BLE001
+        logger.info(f"OTP for {email}: {code}")
+        return {"sent": True, "dev_mode": True, "error": str(exc)}
 
 
 def create_session(user_id: str) -> str:
@@ -825,15 +954,87 @@ def login(request: AuthRequest, req: Request) -> dict:
             raise HTTPException(status_code=401, detail="Wrong password.")
         if row:
             user_id = row["id"]
+            verified = bool(row["verified"])
             connection.execute("UPDATE users SET name = ? WHERE id = ?", (name, user_id))
         else:
             user_id = uuid4().hex
             connection.execute(
-                "INSERT INTO users (id, name, email, password_hash, provider, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO users (id, name, email, password_hash, provider, verified, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
                 (user_id, name, email, password_hash(request.password), "local", utc_now()),
             )
+            verified = False
+
+    if not verified:
+        code = generate_otp()
+        otp_store(email, code, get_settings().otp_ttl_seconds)
+        send_result = send_otp_email(email, code)
+        logger.info(f"OTP requested for new/unverified user: {email} from {client_ip}")
+        return {
+            "requires_otp": True,
+            "email": email,
+            "message": "Email verification needed. A 6-digit code was sent to your email.",
+            "otp_log": send_result.get("log", ""),
+            "dev_mode": send_result.get("dev_mode", False),
+        }
+
     token = create_session(user_id)
     logger.info(f"User login: {email} from {client_ip}")
+    return {"token": token, **public_profile({"id": user_id, "name": name, "email": email, "provider": "local"})}
+
+
+class OtpVerifyRequest(BaseModel):
+    email: str
+    code: str
+
+
+class SendOtpRequest(BaseModel):
+    email: str
+
+
+@app.post("/auth/send-otp")
+def send_otp(request: SendOtpRequest) -> dict:
+    email = request.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required.")
+    code = generate_otp()
+    otp_store(email, code, get_settings().otp_ttl_seconds)
+    send_result = send_otp_email(email, code)
+    return {
+        "sent": True,
+        "email": email,
+        "message": "A 6-digit code was sent to your email.",
+        "otp_log": send_result.get("log", ""),
+        "dev_mode": send_result.get("dev_mode", False),
+    }
+
+
+@app.post("/auth/verify-otp")
+def verify_otp(request: OtpVerifyRequest, req: Request) -> dict:
+    client_ip = get_client_ip(req)
+    email = request.email.strip().lower()
+    code = request.code.strip()
+    if not email or not code:
+        raise HTTPException(status_code=400, detail="Email and code are required.")
+    if not otp_verify(email, code):
+        raise HTTPException(status_code=401, detail="Invalid or expired code. Request a new code.")
+    with db_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+        if row:
+            user_id = row["id"]
+            connection.execute("UPDATE users SET verified = 1, provider = 'local' WHERE id = ?", (user_id,))
+            name = row["name"]
+        else:
+            user_id = uuid4().hex
+            name = email.split("@")[0]
+            connection.execute(
+                "INSERT INTO users (id, name, email, password_hash, provider, verified, created_at) VALUES (?, ?, ?, '', 'local', 1, ?)",
+                (user_id, name, email, utc_now()),
+            )
+    token = create_session(user_id)
+    logger.info(f"Email verified login: {email} from {client_ip}")
     return {"token": token, **public_profile({"id": user_id, "name": name, "email": email, "provider": "local"})}
 
 
@@ -847,42 +1048,108 @@ def google_demo_login() -> dict:
     raise HTTPException(status_code=403, detail="Demo login is disabled. Please sign in with your email and password.")
 
 
+def google_redirect_uri(request: Request | None = None) -> str:
+    settings = get_settings()
+    if settings.google_redirect_uri:
+        return settings.google_redirect_uri
+    if request:
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+        host = request.headers.get("host") or request.url.netloc
+        return f"{scheme}://{host}/auth/google/callback"
+    return f"http://{request.host if request else '127.0.0.1:8000'}/auth/google/callback"
+
+
 @app.get("/auth/google/start")
 def google_start(request: Request) -> RedirectResponse:
     settings = get_settings()
     if not settings.google_client_id or not settings.google_client_secret:
         raise HTTPException(status_code=400, detail="Google login needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env.")
-    redirect_uri = settings.google_redirect_uri
+    redirect_uri = google_redirect_uri(request)
+    state = secrets.token_urlsafe(24)
+    with db_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS oauth_state (
+                state TEXT PRIMARY KEY,
+                redirect_uri TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO oauth_state (state, redirect_uri, created_at) VALUES (?, ?, ?)",
+            (state, redirect_uri, utc_now()),
+        )
     params = urllib.parse.urlencode({
         "client_id": settings.google_client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "openid email profile",
-        "access_type": "offline",
+        "access_type": "online",
         "prompt": "select_account",
+        "state": state,
     })
     return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
 
 
 @app.get("/auth/google/status")
-def google_status() -> dict:
+def google_status(request: Request) -> dict:
     settings = get_settings()
     return {
         "configured": bool(settings.google_client_id and settings.google_client_secret),
-        "redirect_uri": settings.google_redirect_uri,
+        "redirect_uri": google_redirect_uri(request),
     }
 
 
+def google_error_page(message: str) -> HTMLResponse:
+    safe_message = str(message).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return HTMLResponse(
+        f"""<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sign-in failed</title><style>
+body{{margin:0;display:grid;place-items:center;min-height:100vh;background:linear-gradient(135deg,#07111f,#174256 55%,#31245f);font-family:Inter,Segoe UI,Arial,sans-serif;color:#eef7ff}}
+.card{{max-width:520px;padding:36px;border:1px solid #2dd4bf44;border-radius:18px;background:rgba(7,16,31,.8);box-shadow:0 30px 80px #000a}}
+h1{{margin:0 0 12px;font-size:24px}}p{{color:#bfd7ff;line-height:1.6}}
+code{{background:#0a1628;padding:2px 6px;border-radius:6px}}
+a{{color:#5eead4;font-weight:700}}</style></head><body>
+<div class="card"><h1>Google sign-in could not complete</h1><p>{safe_message}</p>
+<p><a href="/">Go back to Aurine</a> and try the email code login, or fix the Google settings and retry.</p></div></body></html>"""
+    )
+
+
 @app.get("/auth/google/callback")
-def google_callback(code: str = "") -> HTMLResponse:
+def google_callback(request: Request, code: str = "", state: str = "", error: str = "") -> HTMLResponse:
     settings = get_settings()
+    if error:
+        return google_error_page(f"Google returned: {error}. Please try again.")
     if not code:
-        raise HTTPException(status_code=400, detail="Missing Google code.")
+        return google_error_page("Google did not return an authorization code.")
+    if not state:
+        return google_error_page("Missing state parameter. Please retry Google login.")
+
+    with db_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS oauth_state (
+                state TEXT PRIMARY KEY,
+                redirect_uri TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        state_row = connection.execute(
+            "SELECT redirect_uri, created_at FROM oauth_state WHERE state = ?",
+            (state,),
+        ).fetchone()
+        connection.execute("DELETE FROM oauth_state WHERE state = ?", (state,))
+    if not state_row:
+        return google_error_page("Invalid or expired sign-in state. Please retry Google login.")
+    redirect_uri = state_row["redirect_uri"]
+
     token_payload = urllib.parse.urlencode({
         "code": code,
         "client_id": settings.google_client_id,
         "client_secret": settings.google_client_secret,
-        "redirect_uri": settings.google_redirect_uri,
+        "redirect_uri": redirect_uri,
         "grant_type": "authorization_code",
     }).encode("utf-8")
     token_request = urllib.request.Request(
@@ -891,28 +1158,46 @@ def google_callback(code: str = "") -> HTMLResponse:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(token_request, timeout=20) as response:
-        token_data = json_loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(token_request, timeout=25) as response:
+            token_data = json_loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        return google_error_page(f"Could not exchange the Google code: {exc}")
+
     access_token = dict(token_data).get("access_token", "")
-    info_request = urllib.request.Request(
-        "https://www.googleapis.com/oauth2/v2/userinfo",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    with urllib.request.urlopen(info_request, timeout=20) as response:
-        info = dict(json_loads(response.read().decode("utf-8")))
+    if not access_token:
+        return google_error_page("Google did not return an access token.")
+
+    info = {}
+    try:
+        info_request = urllib.request.Request(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        with urllib.request.urlopen(info_request, timeout=25) as response:
+            info = dict(json_loads(response.read().decode("utf-8")))
+    except Exception as exc:
+        return google_error_page(f"Could not fetch your Google profile: {exc}")
+
     email = str(info.get("email", "")).lower()
-    name = str(info.get("name") or email.split("@")[0])
     if not email:
-        raise HTTPException(status_code=400, detail="Google did not return email.")
+        return google_error_page("Google did not return an email address.")
+    if str(info.get("verified_email", "true")).lower() == "false":
+        return google_error_page("This Google account has an unverified email, so it cannot be used to sign in.")
+
+    name = str(info.get("name") or email.split("@")[0])
     with db_connection() as connection:
         row = connection.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
         if row:
             user_id = row["id"]
-            connection.execute("UPDATE users SET name = ?, provider = 'google' WHERE id = ?", (name, user_id))
+            connection.execute(
+                "UPDATE users SET name = ?, provider = 'google', verified = 1 WHERE id = ?",
+                (name, user_id),
+            )
         else:
             user_id = uuid4().hex
             connection.execute(
-                "INSERT INTO users (id, name, email, password_hash, provider, created_at) VALUES (?, ?, ?, '', 'google', ?)",
+                "INSERT INTO users (id, name, email, password_hash, provider, verified, created_at) VALUES (?, ?, ?, '', 'google', 1, ?)",
                 (user_id, name, email, utc_now()),
             )
     token = create_session(user_id)
@@ -2727,16 +3012,7 @@ def answer_question_stream(question: str, history: list[dict] | None = None, mod
     if settings.memory_enabled:
         memory_context = memory.build_memory_context()
 
-    system_prompt = agent.system_prompt if agent else (
-        "You are Aurine — an advanced AI assistant with access to real tools. "
-        "You can search the web, get weather, run code, read/write files, execute commands, create images, "
-        "calculate math, and search uploaded documents. "
-        "Use tools when they would help answer the user's question better than your training data alone. "
-        "Understand Hindi, Hinglish, English, Gujarati, Marathi, mixed-language prompts, and spelling mistakes. "
-        "Reply in the same language/style as the user's latest message. "
-        "Be concise, practical, and direct. Use code blocks with language tags when showing code. "
-        "For create/build requests, generate the full implementation."
-    )
+    system_prompt = agent.system_prompt if agent else CODE_X_SYSTEM_PROMPT
 
     if memory_context:
         system_prompt += f"\n\nUSER MEMORY:\n{memory_context}"
@@ -2816,16 +3092,7 @@ def chat(request: ChatRequest, req: Request, authorization: str | None = Header(
         if settings.memory_enabled:
             memory_context = memory.build_memory_context()
 
-        system_prompt = agent.system_prompt if agent else (
-            "You are Aurine — an advanced AI assistant with access to real tools. "
-            "You can search the web, get weather, run code, read/write files, execute commands, create images, "
-            "calculate math, and search uploaded documents. "
-            "Use tools when they would help answer the user's question better than your training data alone. "
-            "Understand Hindi, Hinglish, English, Gujarati, Marathi, mixed-language prompts, and spelling mistakes. "
-            "Reply in the same language/style as the user's latest message. "
-            "Be concise, practical, and direct. Use code blocks with language tags when showing code. "
-            "For create/build requests, generate the full implementation."
-        )
+        system_prompt = agent.system_prompt if agent else CODE_X_SYSTEM_PROMPT
 
         if memory_context:
             system_prompt += f"\n\nUSER MEMORY:\n{memory_context}"

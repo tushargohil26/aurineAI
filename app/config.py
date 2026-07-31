@@ -65,7 +65,14 @@ class Settings:
 
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = "http://127.0.0.1:8000/auth/google/callback"
+    google_redirect_uri: str = ""
+
+    email_smtp_host: str = ""
+    email_smtp_port: int = 587
+    email_smtp_user: str = ""
+    email_smtp_password: str = ""
+    email_from: str = "Aurine <no-reply@aurine.local>"
+    otp_ttl_seconds: int = 600
 
     def __init__(self):
         self.ai_provider = _g("AI_PROVIDER", "aurine")
@@ -103,7 +110,14 @@ class Settings:
 
         self.google_client_id = _g("GOOGLE_CLIENT_ID")
         self.google_client_secret = _g("GOOGLE_CLIENT_SECRET")
-        self.google_redirect_uri = _g("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/auth/google/callback")
+        self.google_redirect_uri = _g("GOOGLE_REDIRECT_URI", "")
+
+        self.email_smtp_host = _g("EMAIL_SMTP_HOST")
+        self.email_smtp_port = int(_g("EMAIL_SMTP_PORT", "587"))
+        self.email_smtp_user = _g("EMAIL_SMTP_USER")
+        self.email_smtp_password = _g("EMAIL_SMTP_PASSWORD")
+        self.email_from = _g("EMAIL_FROM", "Aurine <no-reply@aurine.local>")
+        self.otp_ttl_seconds = int(_g("OTP_TTL_SECONDS", "600"))
 
 
 _settings_cache = None

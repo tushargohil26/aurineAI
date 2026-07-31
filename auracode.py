@@ -1,4 +1,5 @@
-﻿import json
+﻿import contextlib
+import json
 import os
 import sys
 import time
@@ -1984,6 +1985,418 @@ def _auto_setup_wizard():
 
 
 # ============================================================================
+# OPENCODE-STYLE TUI  (chat pane + sidebar + top bar)
+# ============================================================================
+
+_tui_state = {
+    "focus": "input",
+    "section": 0,
+    "index": 0,
+    "buffer": "",
+    "cursor": 0,
+    "hist": [],
+    "hist_i": -1,
+    "working": False,
+}
+_tui_chat = []
+
+_TUI_COMMANDS = [
+    "help", "clear", "connect", "agents", "model", "skills", "plugins",
+    "init", "config", "doctor", "device", "history", "palette",
+    "new", "session", "sessions", "resume",
+    "files", "ls", "dir", "read", "open", "cat", "write", "edit", "run",
+    "diff", "log", "commit", "git",
+    "web", "img", "compact", "cost", "quit", "exit",
+]
+
+
+def _tui_interactive():
+    try:
+        return bool(sys.stdin.isatty())
+    except Exception:
+        return False
+
+
+def _tui_noop_cm():
+    return contextlib.nullcontext()
+
+
+@contextlib.contextmanager
+def _tui_capture():
+    """Redirect console output into a buffer so turns can render inside the TUI."""
+    global console
+    import io
+    saved = console
+    buf = io.StringIO()
+    cap = Console(file=buf, width=90, highlight=False, markup=True)
+    cap.status = lambda *a, **k: _tui_noop_cm()
+    cap.live = lambda *a, **k: _tui_noop_cm()
+    console = cap
+    try:
+        yield buf
+    finally:
+        console = saved
+
+
+def _tui_read_key():
+    if sys.platform == "win32":
+        import msvcrt
+        c = msvcrt.getwch()
+        if c in ("\x00", "\xe0"):
+            c2 = msvcrt.getwch()
+            return {"H": "up", "P": "down", "K": "left", "M": "right"}.get(c2, c2)
+        if c == "\r":
+            return "enter"
+        if c == "\t":
+            return "tab"
+        if c in ("\x7f", "\x08"):
+            return "backspace"
+        if c == "\x03":
+            return "ctrl+c"
+        if c == "\x10":
+            return "ctrl+p"
+        if c == "\x1b":
+            return "esc"
+        return c
+    import os as _os
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        c = _os.read(fd, 1)
+        if not c:
+            return "none"
+        c = c.decode("utf-8", "ignore")
+        if c == "\x1b":
+            seq = _os.read(fd, 2)
+            if seq == b"[A":
+                return "up"
+            if seq == b"[B":
+                return "down"
+            if seq == b"[C":
+                return "right"
+            if seq == b"[D":
+                return "left"
+            if seq == b"[Z":
+                return "tab"
+            return "esc"
+        if c == "\r":
+            return "enter"
+        if c == "\t":
+            return "tab"
+        if c in ("\x7f", "\x08"):
+            return "backspace"
+        if c == "\x03":
+            return "ctrl+c"
+        if c == "\x10":
+            return "ctrl+p"
+        return c
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _tui_sidebar_items():
+    sections = []
+    model_rows = []
+    for m in MODELS:
+        marker = " ◄" if m["id"] == _state["model"]["id"] else ""
+        model_rows.append(f"[{m['color']}]{m['name']}[/] [dim]{m['provider']}[/]{marker}")
+    sections.append(("Model", model_rows))
+    agent_rows = []
+    for a in AGENTS:
+        marker = " ◄" if a["id"] == _state["agent"]["id"] else ""
+        agent_rows.append(f"{a['icon']} {a['name']}{marker}")
+    sections.append(("Agent", agent_rows))
+    session_rows = []
+    for s in _get_sessions()[:20]:
+        marker = " ◄" if s.get("id") == _state.get("chat_id") else ""
+        name = s.get("name") or s.get("id", "?")[:8]
+        session_rows.append(f"💬 {name} [dim]{len(s.get('messages', []))} msgs[/]{marker}")
+    sections.append(("Session", session_rows))
+    return sections
+
+
+def _tui_render_sidebar():
+    from rich.panel import Panel
+    sections = _tui_sidebar_items()
+    out = []
+    for si, (title, items) in enumerate(sections):
+        if _tui_state["focus"] == "sidebar" and _tui_state["section"] == si:
+            out.append(f"[bold cyan]▶ {title}[/]")
+        else:
+            out.append(f"[bold]{title}[/]")
+        if not items:
+            out.append("  [dim]none[/]")
+        for ii, item in enumerate(items):
+            if _tui_state["focus"] == "sidebar" and _tui_state["section"] == si and _tui_state["index"] == ii:
+                out.append(f"  [reverse]{item}[/]")
+            else:
+                out.append(f"  {item}")
+        out.append("")
+    out.append("[dim]Tab switch · ←→ section · ↑↓ move · Enter select[/]")
+    return Panel("\n".join(out), box=ROUNDED, border_style="cyan", title="[bold]Control[/]")
+
+
+def _tui_render_chat():
+    from rich.panel import Panel
+    lines = list(_tui_chat)
+    if _tui_state["working"]:
+        lines.append("[dim]… working …[/]")
+    content = "\n".join(lines[-300:])
+    if not content.strip():
+        content = "[dim]Welcome to Aurine.\nType a message, Tab to switch model/agent, / for commands.[/]"
+    return Panel(content, box=ROUNDED, border_style="dim", title="[bold cyan]Aurine[/]")
+
+
+def _tui_layout():
+    from rich.layout import Layout
+    from rich.panel import Panel
+    from rich.markup import escape
+    prov, model, has_key = _get_provider_info()
+    agent = _state["agent"]
+    model_display = _state["model"].get("name") or model or "?"
+    session = escape(_state.get("session_name") or (_state.get("chat_id") or "new")[:12])
+    ws = escape(WORKSPACE.name)
+    if has_key:
+        status = "[green]● connected[/]"
+    elif prov == "ollama":
+        status = "[green]● local[/]"
+    else:
+        status = "[yellow]● no AI[/]"
+    header = Panel(
+        f"[bold cyan]Aurine[/] [dim]v3.0[/]  {agent['icon']} [bold]{agent['name']}[/]  ·  "
+        f"[bold]{model_display}[/] [dim]({prov.upper() if prov else '?'})[/]  ·  {session}  ·  {ws}  {status}",
+        box=ROUNDED, border_style="dim")
+    body = Layout()
+    body.split_row(
+        Layout(_tui_render_chat(), name="chat", ratio=3),
+        Layout(_tui_render_sidebar(), name="side", ratio=1),
+    )
+    buffer = _tui_state["buffer"]
+    cursor = _tui_state["cursor"]
+    if _tui_state["focus"] == "input":
+        line = buffer[:cursor] + "[reverse] [/]" + buffer[cursor:]
+    else:
+        line = buffer or "[dim](input)[/]"
+    input_lines = [f"[bold cyan]❯[/] {line}"]
+    if buffer.startswith("/") and len(buffer) > 1:
+        q = buffer[1:].lower()
+        matches = [m for m in _TUI_COMMANDS if m.startswith(q)][:12]
+        if matches:
+            input_lines.append("[dim]    " + "  ".join("/" + m for m in matches) + "[/]")
+    input_panel = Panel("\n".join(input_lines), box=ROUNDED, border_style="cyan")
+    layout = Layout()
+    layout.split_column(
+        Layout(header, name="header", size=3),
+        Layout(body, name="body"),
+        Layout(input_panel, name="input", size=4),
+    )
+    return layout
+
+
+def _tui_sidebar_enter():
+    from rich.markup import escape
+    sections = _tui_sidebar_items()
+    title, items = sections[_tui_state["section"]]
+    if not items:
+        return
+    index = _tui_state["index"]
+    if title == "Model" and index < len(MODELS):
+        m = MODELS[index]
+        _state["model"] = m
+        _tui_chat.append(f"[green]✓[/] Model: [bold]{escape(m['name'])}[/] [dim]{m['provider']}[/]")
+    elif title == "Agent" and index < len(AGENTS):
+        a = AGENTS[index]
+        _state["agent"] = a
+        _tui_chat.append(f"[green]✓[/] Agent: [bold]{escape(a['name'])}[/]")
+    elif title == "Session":
+        sessions = _get_sessions()
+        if index < len(sessions):
+            s = sessions[index]
+            _state["chat_id"] = s.get("id")
+            _state["history"] = s.get("messages", [])
+            _state["session_name"] = s.get("name", "")
+            _tui_sync_from_history()
+            _tui_chat.append(f"[green]✓[/] Session: [bold]{escape(_state['session_name'])}[/]")
+    _tui_state["focus"] = "input"
+
+
+def _tui_turn(raw):
+    from rich.markup import escape
+    msg = raw.strip()
+    if _state.get("chat_id") is None:
+        _state["chat_id"] = f"cli_{uuid4().hex[:8]}"
+    _tui_chat.append(f"[bold cyan]user[/]  {escape(msg)}")
+    _state["history"].append({"role": "user", "content": msg})
+    with _tui_capture() as buf:
+        _run_turn(msg, _state["chat_id"])
+    text = buf.getvalue().strip()
+    if text:
+        _tui_chat.append(escape(text[-2500:]))
+
+
+def _tui_slash(raw):
+    from rich.markup import escape
+    _tui_chat.append(f"[bold magenta]cmd[/]  {escape(raw.strip())}")
+    cmd = raw.strip().split(" ", 1)[0][1:].lower()
+    with _tui_capture() as buf:
+        _handle_slash(raw)
+    text = buf.getvalue().strip()
+    if text:
+        _tui_chat.append(escape(text[:2500]))
+    if cmd in {"new", "session", "resume"}:
+        _tui_sync_from_history()
+
+
+def _tui_sync_from_history():
+    from rich.markup import escape
+    _tui_chat.clear()
+    for m in _state.get("history", [])[-60:]:
+        role = m.get("role", "")
+        content = str(m.get("content", ""))
+        if role == "user":
+            _tui_chat.append(f"[bold cyan]user[/]  {escape(content[:400])}")
+        else:
+            _tui_chat.append(escape(content[:800]))
+    if not _tui_chat:
+        _tui_chat.append("[dim]New session. Ask anything.[/]")
+
+
+def _tui_command_list():
+    _tui_chat.append("[bold cyan]Commands[/]  [dim](Ctrl+P)[/]")
+    for c in COMMANDS:
+        key_hint = f" [dim]{c['key']}[/]" if c.get("key") else ""
+        _tui_chat.append(f"  {c['icon']}  /{c['cmd'].lstrip('/')}  [dim]{c['desc']}[/]{key_hint}")
+
+
+def _tui_run():
+    from rich.live import Live
+    if _state.get("chat_id") is None:
+        _state["chat_id"] = f"cli_{uuid4().hex[:8]}"
+    sessions = _get_sessions()
+    if sessions:
+        last = sessions[0]
+        _state["chat_id"] = last.get("id", _state["chat_id"])
+        _state["history"] = last.get("messages", [])
+        _state["session_name"] = last.get("name", "")
+    _tui_sync_from_history()
+
+    live = Live(_tui_layout(), console=console, screen=False, auto_refresh=False, refresh_per_second=10)
+    running = True
+    with live:
+        while running:
+            live.update(_tui_layout())
+            live.refresh()
+            key = _tui_read_key()
+
+            if key == "ctrl+c":
+                if _tui_state["buffer"]:
+                    _tui_state["buffer"] = ""
+                    _tui_state["cursor"] = 0
+                else:
+                    running = False
+                    console.print("\n[dim]bye[/]")
+                continue
+            if key == "ctrl+p":
+                _tui_command_list()
+                continue
+
+            if _tui_state["focus"] == "sidebar":
+                if key == "tab":
+                    _tui_state["focus"] = "input"
+                elif key == "esc":
+                    _tui_state["focus"] = "input"
+                elif key == "left":
+                    _tui_state["section"] = max(0, _tui_state["section"] - 1)
+                    _tui_state["index"] = 0
+                elif key == "right":
+                    _tui_state["section"] = min(2, _tui_state["section"] + 1)
+                    _tui_state["index"] = 0
+                elif key == "up":
+                    _tui_state["index"] = max(0, _tui_state["index"] - 1)
+                elif key == "down":
+                    _tui_state["index"] += 1
+                elif key == "enter":
+                    _tui_sidebar_enter()
+                continue
+
+            if key == "tab":
+                _tui_state["focus"] = "sidebar"
+                _tui_state["index"] = 0
+            elif key == "enter":
+                raw = _tui_state["buffer"]
+                _tui_state["buffer"] = ""
+                _tui_state["cursor"] = 0
+                if not raw.strip():
+                    continue
+                _tui_state["hist"].append(raw)
+                _tui_state["hist_i"] = -1
+                low = raw.strip().lower()
+                if low in {"exit", "quit", "/quit"}:
+                    if _state.get("chat_id") and _state.get("history"):
+                        _save_session(_state["chat_id"], _state["history"], _state.get("session_name", ""))
+                    running = False
+                    console.print("\n[dim]bye[/]")
+                    continue
+                _tui_state["working"] = True
+                live.update(_tui_layout())
+                live.refresh()
+                live.stop()
+                try:
+                    if raw.strip().startswith("/"):
+                        _tui_slash(raw)
+                    else:
+                        _tui_turn(raw)
+                except SystemExit:
+                    running = False
+                except KeyboardInterrupt:
+                    _tui_chat.append("[dim]interrupted[/]")
+                except Exception as e:
+                    _tui_chat.append(f"[red]✗ error:[/] {e}")
+                finally:
+                    _tui_state["working"] = False
+                    live.start()
+            elif key == "backspace":
+                if _tui_state["cursor"] > 0:
+                    b = _tui_state["buffer"]
+                    c = _tui_state["cursor"]
+                    _tui_state["buffer"] = b[:c - 1] + b[c:]
+                    _tui_state["cursor"] -= 1
+            elif key == "left":
+                _tui_state["cursor"] = max(0, _tui_state["cursor"] - 1)
+            elif key == "right":
+                _tui_state["cursor"] = min(len(_tui_state["buffer"]), _tui_state["cursor"] + 1)
+            elif key == "up":
+                h = _tui_state["hist"]
+                if h and _tui_state["hist_i"] < len(h) - 1:
+                    _tui_state["hist_i"] += 1
+                    _tui_state["buffer"] = h[len(h) - 1 - _tui_state["hist_i"]]
+                    _tui_state["cursor"] = len(_tui_state["buffer"])
+            elif key == "down":
+                h = _tui_state["hist"]
+                if _tui_state["hist_i"] > 0:
+                    _tui_state["hist_i"] -= 1
+                    _tui_state["buffer"] = h[len(h) - 1 - _tui_state["hist_i"]]
+                    _tui_state["cursor"] = len(_tui_state["buffer"])
+                else:
+                    _tui_state["hist_i"] = -1
+                    _tui_state["buffer"] = ""
+                    _tui_state["cursor"] = 0
+            elif key == "esc":
+                _tui_state["buffer"] = ""
+                _tui_state["cursor"] = 0
+            elif key not in ("none",):
+                ch = key
+                if len(ch) == 1:
+                    b = _tui_state["buffer"]
+                    c = _tui_state["cursor"]
+                    _tui_state["buffer"] = b[:c] + ch + b[c:]
+                    _tui_state["cursor"] += 1
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -2027,6 +2440,13 @@ def main():
     if sessions:
         last = sessions[0]
         _state["session_name"] = last.get("name", last["id"][:8])
+
+    if _tui_interactive():
+        try:
+            _tui_run()
+            return
+        except Exception as e:
+            console.print(f"\n[yellow]TUI error, falling back to classic mode:[/] {e}\n")
 
     _print_header()
 

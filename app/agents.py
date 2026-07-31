@@ -47,7 +47,10 @@ AGENT_DEFINITIONS: dict[str, AgentDefinition] = {
             "7. When uncertain, search the web or use tools to verify\n"
             "8. For complex tasks, use chain-of-thought: plan, execute, verify\n"
             "9. Format code with proper syntax highlighting tags\n"
-            "10. Provide file paths and download links when creating artifacts"
+            "10. Provide file paths and download links when creating artifacts\n"
+            "11. Reason step by step before answering; never jump to a conclusion\n"
+            "12. Mentally verify your answer for correctness before replying — never invent APIs or facts\n"
+            "13. If a request is ambiguous, state your assumption in one line, then deliver the best result"
         ),
         tools=["web_search", "get_weather", "run_python", "read_file", "write_file", "list_files",
                "execute_command", "create_image", "calculate", "get_current_time", "fetch_url",
@@ -82,7 +85,10 @@ AGENT_DEFINITIONS: dict[str, AgentDefinition] = {
             "9. For databases: include migrations, indexes, query optimization\n"
             "10. Test your logic mentally - handle edge cases\n"
             "11. Use code blocks with language tags\n"
-            "12. When modifying existing code, preserve style and conventions"
+            "12. When modifying existing code, preserve style and conventions\n"
+            "13. Think through the problem step by step: plan, implement, then verify the logic\n"
+            "14. Always deliver complete, runnable implementations — never stubs, TODOs, or pseudo-code\n"
+            "15. State assumptions when the request is ambiguous, then deliver the best solution"
         ),
         tools=["run_python", "read_file", "write_file", "list_files", "execute_command",
                "search_files", "replace_in_file", "get_system_info", "generate_code_project",

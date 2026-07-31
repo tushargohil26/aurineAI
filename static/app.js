@@ -9,6 +9,10 @@ const googleLoginButton = q("#googleLoginButton");
 const loginName = q("#loginName");
 const loginEmail = q("#loginEmail");
 const loginPassword = q("#loginPassword");
+const otpBox = q("#otpBox");
+const otpCode = q("#otpCode");
+const verifyOtpButton = q("#verifyOtpButton");
+const resendOtpButton = q("#resendOtpButton");
 const chatList = q("#chatList");
 const agentRailList = q("#agentRailList");
 const pluginRailList = q("#pluginRailList");
@@ -368,9 +372,11 @@ function artifactType(text) {
   if (/\b(zip|archive|bundle)\b/.test(normalized)) return "zip";
   if (mode === "image" || /\b(image|photo|picture|poster|logo|banner|thumbnail|wallpaper|cat|dog)\b/.test(normalized) || /tasveer|billi|photo banao|image banao/.test(normalized)) return "image";
   if (mode === "video" || /\b(video|vidio|reel|shorts|movie|clip)\b/.test(normalized) || /video banao/.test(normalized)) return "video";
-  if (mode === "pdf" || /\b(pdf|report|invoice|resume|document)\b/.test(normalized) || /pdf banao|report banao/.test(normalized)) return "pdf";
+  if (mode === "pdf" || /\b(pdf|report|invoice|resume)\b/.test(normalized) || /pdf banao|report banao/.test(normalized)) return "pdf";
   if (/\b(excel|xlsx|spreadsheet|sheet)\b/.test(normalized) || /excel banao|sheet banao/.test(normalized)) return "excel";
-  if (/\b(markdown|txt|note|file)\b/.test(normalized)) return "document";
+  if (/\b(folder|directory)\b/.test(normalized) || /folder banao|directory banao|banao.*folder/.test(normalized)) return "folder";
+  if (/\b([a-z0-9_-]+\.(py|js|ts|jsx|tsx|html|css|txt|md|json|java|cpp|c|go|rs|rb|php|sql|sh|bat))\b/.test(normalized)) return "file";
+  if (/\b(markdown|txt|note|file)\b/.test(normalized) || /file banao|banao.*file|file create/.test(normalized)) return "document";
   if (lastArtifactId && /\b(change|edit|modify|update|make it|isko|isey|isse)\b/.test(normalized)) return "image";
   return "";
 }
@@ -2453,6 +2459,8 @@ async function openPanel(panel) {
   cloudPanel.hidden = true;
 }
 
+let pendingLoginEmail = null;
+
 loginForm.onsubmit = async (event) => {
   event.preventDefault();
   loginStatus.textContent = "Signing in...";
@@ -2462,11 +2470,59 @@ loginForm.onsubmit = async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: loginName.value, email: loginEmail.value, password: loginPassword.value }),
     });
+    if (data.requires_otp) {
+      pendingLoginEmail = data.email;
+      otpCode.value = "";
+      otpBox.hidden = false;
+      loginStatus.textContent = data.message + (data.otp_log ? ` Code logged to: ${data.otp_log}` : "");
+      otpCode.focus();
+      return;
+    }
     authToken = data.token;
     localStorage.setItem(tokenKey, authToken);
     applyProfile(data);
     showApp();
     await loadChats();
+  } catch (error) {
+    loginStatus.textContent = error.message;
+  }
+};
+
+verifyOtpButton.onclick = async () => {
+  if (!pendingLoginEmail) {
+    loginStatus.textContent = "Enter your email first.";
+    return;
+  }
+  loginStatus.textContent = "Verifying...";
+  try {
+    const data = await api("/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: pendingLoginEmail, code: otpCode.value.trim() }),
+    });
+    authToken = data.token;
+    localStorage.setItem(tokenKey, authToken);
+    applyProfile(data);
+    showApp();
+    await loadChats();
+  } catch (error) {
+    loginStatus.textContent = error.message;
+  }
+};
+
+resendOtpButton.onclick = async () => {
+  if (!pendingLoginEmail) {
+    loginStatus.textContent = "Enter your email first.";
+    return;
+  }
+  loginStatus.textContent = "Sending a new code...";
+  try {
+    const data = await api("/auth/send-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: pendingLoginEmail }),
+    });
+    loginStatus.textContent = data.message + (data.otp_log ? ` Code logged to: ${data.otp_log}` : "");
   } catch (error) {
     loginStatus.textContent = error.message;
   }
@@ -2479,7 +2535,7 @@ googleLoginButton.onclick = async () => {
       loginStatus.textContent = "Google login is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env, then restart the server.";
       return;
     }
-    loginStatus.textContent = `Opening Google. In Google Cloud, Authorized redirect URI must be: ${status.authorized_redirect_uri || status.redirect_uri}`;
+    loginStatus.textContent = `Opening Google. In Google Cloud, Authorized redirect URI must be: ${status.redirect_uri}`;
     location.href = "/auth/google/start";
   } catch (error) {
     loginStatus.textContent = error.message;

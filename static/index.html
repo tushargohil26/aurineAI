@@ -25,6 +25,11 @@
         <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" required />
         <button type="submit">Continue</button>
         <button id="googleLoginButton" class="google-button" type="button">Continue with Google</button>
+        <div id="otpBox" class="otp-box" hidden>
+          <input id="otpCode" inputmode="numeric" placeholder="6-digit code" autocomplete="one-time-code" maxlength="6" />
+          <button id="verifyOtpButton" type="button">Verify &amp; sign in</button>
+          <button id="resendOtpButton" class="google-button" type="button">Resend code</button>
+        </div>
         <div id="loginStatus" class="login-status"></div>
       </form>
     </section>

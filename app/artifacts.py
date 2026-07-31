@@ -21,6 +21,28 @@ def safe_name(text: str, fallback: str = "artifact") -> str:
     return name[:70] or fallback
 
 
+def _llm_generate(system: str, user: str, temperature: float = 0.4) -> str:
+    """Generate real content from the local AI model, with silent fallback."""
+    try:
+        from .llm import chat_completion
+        result = chat_completion(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=temperature,
+        )
+        return str(result or "").strip()
+    except Exception:
+        return ""
+
+
+def _detect_filename(prompt: str) -> str | None:
+    match = re.search(
+        r"([a-zA-Z0-9_\-]+\.(py|js|ts|jsx|tsx|html|css|txt|md|markdown|json|java|cpp|c|go|rs|rb|php|sql|yaml|yml|sh|bat))",
+        prompt,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
 def artifacts_root() -> Path:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     return ARTIFACT_ROOT
@@ -39,13 +61,22 @@ def classify_artifact(prompt: str) -> str:
         return "html"
     if any(word in text for word in ["excel", "xlsx", "spreadsheet", "sheet"]):
         return "excel"
-    if any(word in text for word in ["pdf", "report", "invoice", "resume", "document"]):
+    if any(word in text for word in ["pdf", "report", "invoice", "resume"]):
         return "pdf"
     if any(word in text for word in ["video", "animation", "reel", "shorts"]):
         return "video"
     if any(word in text for word in ["image", "img", "photo", "poster", "logo", "banner", "thumbnail", "wallpaper", "tasveer", "chitra", "billi", "cat"]):
         return "image"
-    if any(word in text for word in ["markdown", "txt", "note", "file"]):
+    if any(word in text for word in ["markdown", "txt", "note"]):
+        return "document"
+    if _detect_filename(prompt):
+        return "file"
+    if (
+        any(word in text for word in ["folder", "directory", "project structure", "multi file", "multiple files"])
+        or re.search(r"\bfolder banao\b|\bdirectory banao\b|\bbanao.*folder\b|\b(kaam|work|code)\s+folder\b", text)
+    ):
+        return "folder"
+    if any(word in text for word in ["file", "document"]):
         return "document"
     return "document"
 
@@ -104,6 +135,12 @@ def create_artifact(prompt: str, artifact_type: str | None = None, previous_prom
     elif kind == "zip":
         files = create_zip_file(folder, prompt)
         title = "Generated ZIP archive"
+    elif kind == "file":
+        files = create_text_file(folder, prompt)
+        title = "Generated file"
+    elif kind == "folder":
+        files = create_folder_artifact(folder, prompt)
+        title = "Generated folder"
     else:
         files = create_document(folder, prompt)
         title = "Generated document"
@@ -238,15 +275,93 @@ def create_svg_image(folder: Path, prompt: str) -> list[dict]:
 
 
 def create_document(folder: Path, prompt: str) -> list[dict]:
-    content = (
-        "# Aurine Created Document\n\n"
-        f"Request:\n{prompt}\n\n"
-        f"Created:\n{datetime.utcnow().isoformat()}Z\n\n"
-        "Aurine understood the request even if it was written in Hinglish, another language, or with spelling mistakes.\n"
+    system = (
+        "You are a professional content writer. Write a complete, well-structured Markdown document about the "
+        "user's request. Start with a # title, then 3-8 ## sections, each 1-2 short paragraphs, and use bullet "
+        "lists and bold where useful. Output ONLY the Markdown content, no preamble. Reply in the same language "
+        "as the user's request."
     )
+    content = _llm_generate(system, f"Write a Markdown document about:\n{prompt}")
+    if not content:
+        content = (
+            "# Aurine Created Document\n\n"
+            f"Request:\n{prompt}\n\n"
+            f"Created:\n{datetime.utcnow().isoformat()}Z\n\n"
+            "Aurine understood the request even if it was written in Hinglish, another language, or with spelling mistakes.\n"
+        )
     path = folder / "document.md"
     path.write_text(content, encoding="utf-8")
     return [{"name": "document.md", "kind": "text/markdown"}]
+
+
+def create_text_file(folder: Path, prompt: str) -> list[dict]:
+    filename = _detect_filename(prompt) or "output.txt"
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
+    language_map = {
+        "py": "python", "js": "javascript", "ts": "typescript", "tsx": "typescript react",
+        "jsx": "javascript react", "html": "html", "css": "css", "java": "java",
+        "cpp": "c++", "c": "c", "go": "go", "rs": "rust", "rb": "ruby", "php": "php",
+        "sql": "sql", "json": "json", "sh": "bash", "bat": "batch", "md": "markdown",
+        "txt": "plain text", "yaml": "yaml", "yml": "yaml",
+    }
+    language = language_map.get(extension, extension)
+    is_code = extension not in {"txt", "md", "markdown", "json", "yaml", "yml"}
+    if is_code:
+        system = (
+            f"You are a senior {language} engineer. Write a complete, working, production-ready {language} file "
+            f"that fulfills the user's request. Include imports, error handling, and comments only where needed. "
+            "Output ONLY the code, no markdown fences, no preamble."
+        )
+    else:
+        system = (
+            "You are a professional content writer. Write the complete content the user asked for, in their "
+            "language, well structured. Output ONLY the content, no preamble."
+        )
+    content = _llm_generate(system, f"Create this {language} file ({filename}):\n{prompt}")
+    if not content:
+        content = (
+            f"# Aurine created file: {filename}\n\nRequest:\n{prompt}\n\n"
+            f"Created:\n{datetime.utcnow().isoformat()}Z\n"
+        )
+    path = folder / filename
+    path.write_text(content, encoding="utf-8")
+    kind = f"text/{extension}" if not is_code else f"text/x-{extension}"
+    return [{"name": filename, "kind": kind}]
+
+
+def create_folder_artifact(folder: Path, prompt: str) -> list[dict]:
+    files = []
+    readme_system = (
+        "You are a technical writer. Write a clear README.md for a new project folder. Include: a # title, "
+        "a short description, a ## Files section listing the files that were created, and a ## How to use "
+        "section. Output ONLY the Markdown, no preamble. Reply in the same language as the user's request."
+    )
+    content_system = (
+        "You are a professional content writer. Write the complete content the user asked to put in this folder, "
+        "well structured, in the user's language. Output ONLY the content, no preamble."
+    )
+    readme = _llm_generate(readme_system, f"Write a README for this project folder:\n{prompt}")
+    content = _llm_generate(content_system, f"Write the content for this folder:\n{prompt}")
+    if not content:
+        content = (
+            f"# Folder content\n\nRequest:\n{prompt}\n\n"
+            f"Created:\n{datetime.utcnow().isoformat()}Z\n"
+        )
+    if not readme:
+        readme = f"# {safe_name(prompt, 'aurine-folder')}\n\nCreated by Aurine.\n"
+    readme_path = folder / "README.md"
+    readme_path.write_text(readme, encoding="utf-8")
+    files.append({"name": "README.md", "kind": "text/markdown"})
+    content_path = folder / "content.md"
+    content_path.write_text(content, encoding="utf-8")
+    files.append({"name": "content.md", "kind": "text/markdown"})
+    detected = _detect_filename(prompt)
+    if detected and detected.lower() not in {"readme.md", "content.md"}:
+        code_files = create_text_file(folder, f"Also create the file {detected} with relevant content.\n{prompt}")
+        for item in code_files:
+            if item["name"] not in {f["name"] for f in files}:
+                files.append(item)
+    return files
 
 
 def create_html_file(folder: Path, prompt: str) -> list[dict]:
@@ -442,23 +557,100 @@ def pdf_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def create_pdf(folder: Path, prompt: str) -> list[dict]:
-    lines = ["Aurine Created PDF", "", "Request:"] + textwrap.wrap(prompt, width=78)
-    stream_lines = ["BT", "/F1 18 Tf", "72 760 Td", "24 TL"]
-    for index, line in enumerate(lines[:30]):
-        font = "/F1 18 Tf" if index == 0 else "/F1 11 Tf"
-        stream_lines.append(font)
-        stream_lines.append(f"({pdf_escape(line)}) Tj")
-        stream_lines.append("T*")
-    stream_lines.append("ET")
-    stream = "\n".join(stream_lines)
+def _pdf_content(prompt: str) -> str:
+    system = (
+        "You are a professional report writer. Write a well-structured document about the user's request. "
+        "Format rules:\n"
+        "- First line: the document title with no prefix\n"
+        "- Use lines starting with '## ' for section headings\n"
+        "- Use lines starting with '- ' for bullet points\n"
+        "- Keep every paragraph on a single line (no hard wrapping inside paragraphs)\n"
+        "- Write 3-8 sections, each with 1-2 short paragraphs\n"
+        "- Reply in the same language as the user's request\n"
+        "Output ONLY the document text, no preamble."
+    )
+    content = _llm_generate(system, f"Write a professional document about:\n{prompt}")
+    if not content:
+        content = (
+            f"{prompt}\n\n"
+            "## About\n"
+            "This document was created by Aurine as a real PDF file from your request.\n"
+        )
+    return content
+
+
+def _build_pdf(content: str, path: Path) -> None:
+    page_width = 595
+    margin = 54
+    body_y = 780
+    line_h = 16
+    heading_h = 22
+    title_h = 30
+    body_font = "/F1 11 Tf"
+    heading_font = "/F2 14 Tf"
+    title_font = "/F2 20 Tf"
+
+    pages: list[list[str]] = []
+    current: list[str] = []
+    y = body_y
+
+    def new_page() -> None:
+        nonlocal current, y
+        pages.append(current)
+        current = []
+        y = body_y
+
+    for raw in content.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            y -= 8
+            continue
+        if line.startswith("## "):
+            font = heading_font
+            line_h = heading_h
+            body = line[3:].strip()
+            wrap = 92
+        elif not current and not pages:
+            font = title_font
+            line_h = title_h
+            body = line.strip()
+            wrap = 55
+        else:
+            font = body_font
+            line_h = 16
+            body = line.strip()
+            wrap = 92
+        for part in textwrap.wrap(body, width=wrap) or [body]:
+            if y < 60:
+                new_page()
+            current.append(f"{font} 1 0 0 1 {margin} {y} Tm ({pdf_escape(part)}) Tj")
+            y -= line_h
+        y -= 4
+    if current:
+        pages.append(current)
+    if not pages:
+        pages.append([f"{body_font} 1 0 0 1 {margin} {body_y} Tm (Aurine) Tj"])
+
     objects = [
         "<< /Type /Catalog /Pages 2 0 R >>",
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Pages /Kids [%KIDS%] /Count %COUNT% >>",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        f"<< /Length {len(stream.encode('latin-1', errors='ignore'))} >>\nstream\n{stream}\nendstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     ]
+    kids = []
+    for index, page_stream in enumerate(pages):
+        page_num = 5 + index * 2
+        content_num = page_num + 1
+        kids.append(f"{page_num} 0 R")
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} 842] "
+            f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_num} 0 R >>"
+        )
+        stream = "\n".join(page_stream)
+        encoded_length = len(stream.encode("latin-1", errors="ignore"))
+        objects.append(f"<< /Length {encoded_length} >>\nstream\n{stream}\nendstream")
+    objects[1] = objects[1].replace("%KIDS%", " ".join(kids)).replace("%COUNT%", str(len(kids)))
+
     pdf = "%PDF-1.4\n"
     offsets = [0]
     for number, obj in enumerate(objects, start=1):
@@ -469,8 +661,13 @@ def create_pdf(folder: Path, prompt: str) -> list[dict]:
     for offset in offsets[1:]:
         pdf += f"{offset:010d} 00000 n \n"
     pdf += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
-    path = folder / "document.pdf"
     path.write_bytes(pdf.encode("latin-1", errors="ignore"))
+
+
+def create_pdf(folder: Path, prompt: str) -> list[dict]:
+    content = _pdf_content(prompt)
+    path = folder / "document.pdf"
+    _build_pdf(content, path)
     return [{"name": "document.pdf", "kind": "application/pdf"}]
 
 
