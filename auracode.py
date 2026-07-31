@@ -2668,6 +2668,23 @@ if __name__ == "__main__":
             sock.close()
     elif len(sys.argv) > 1 and sys.argv[1] == "--update":
         _auto_update()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--nexus":
+        _load_ai()
+        port = 8000
+        try:
+            port = int(os.getenv("NEXUS_PORT", "8000"))
+        except ValueError:
+            pass
+        console.print("[green]Aurine Nexus server starting...[/]")
+        console.print(f"[dim]URL: http://0.0.0.0:{port}  (other devices on the network can connect)[/]")
+        try:
+            import uvicorn
+            uvicorn.run("app.main:app", host="0.0.0.0", port=port, log_level="info")
+        except KeyboardInterrupt:
+            console.print("\n[dim]Nexus server stopped.[/]")
+        except Exception as e:
+            console.print(f"\n[red]Could not start Nexus server:[/] {e}")
+            console.print("[dim]Fix: run `pip install uvicorn fastapi python-multipart` in the app venv[/]")
     elif _is_server_running():
         _load_ai()
         console.print("[dim]Connecting to running AuraCode...[/]")

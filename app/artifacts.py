@@ -1,6 +1,7 @@
 ﻿import base64
 import html
 import json
+import os
 import re
 import struct
 import textwrap
@@ -103,9 +104,9 @@ def list_artifacts() -> list[dict]:
 
 
 def get_artifact_file(artifact_id: str, filename: str) -> Path:
-    folder = artifacts_root() / safe_name(artifact_id)
+    folder = (artifacts_root() / artifact_id).resolve()
     target = (folder / filename).resolve()
-    if not str(target).startswith(str(folder.resolve())) or not target.is_file():
+    if not str(target).startswith(str(folder) + os.sep) or not target.is_file():
         raise FileNotFoundError("Artifact file not found.")
     return target
 

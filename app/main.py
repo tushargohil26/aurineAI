@@ -1056,7 +1056,7 @@ def google_redirect_uri(request: Request | None = None) -> str:
         scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
         host = request.headers.get("host") or request.url.netloc
         return f"{scheme}://{host}/auth/google/callback"
-    return f"http://{request.host if request else '127.0.0.1:8000'}/auth/google/callback"
+    return "http://127.0.0.1:8000/auth/google/callback"
 
 
 @app.get("/auth/google/start")
