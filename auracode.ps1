@@ -21,7 +21,7 @@ if (-not $depsOk) {
         python -m venv .venv 2>$null
     }
     if (Test-Path $venvPy) {
-        & $venvPy -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q 2>$null
+        & $venvPy -m pip install rich questionary fastapi uvicorn pypdf openpyxl python-multipart -q 2>$null
         if ($LASTEXITCODE -eq 0) {
             Set-Content -Path ".\.venv\.deps_installed" -Value "ok" -Force
             $depsOk = $true

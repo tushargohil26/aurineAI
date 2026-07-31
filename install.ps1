@@ -252,7 +252,7 @@ if (-not (Test-Path "$venvDir\pyvenv.cfg")) {
 
 Start-Process -FilePath "$venvPy" -ArgumentList "-m pip install --upgrade pip" -Wait -NoNewWindow -ErrorAction SilentlyContinue
 
-$packages = @("rich", "questionary", "fastapi", "uvicorn", "pypdf", "openpyxl")
+$packages = @("rich", "questionary", "fastapi", "uvicorn", "pypdf", "openpyxl", "python-multipart")
 $ok = 0
 $fail = 0
 foreach ($pkg in $packages) {
@@ -307,8 +307,8 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 echo   Installing packages (one-time only)...
-".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q
-".venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl" >nul 2>nul && echo ok> ".venv\.deps_installed"
+".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl python-multipart -q
+".venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl, python_multipart" >nul 2>nul && echo ok> ".venv\.deps_installed"
 
 :launch
 if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
@@ -330,9 +330,9 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 }
 if (-not (Test-Path ".venv\.deps_installed")) {
     Write-Host "  Installing packages (one-time)..." -ForegroundColor DarkGray
-    & ".\.venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q
+    & ".\.venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl python-multipart -q
     try {
-        & ".\.venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl"
+        & ".\.venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl, python_multipart"
         if (`$LASTEXITCODE -eq 0) { Set-Content -Path ".venv\.deps_installed" -Value "ok" -Force }
     } catch {}
 }

@@ -16,8 +16,8 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 echo   Installing packages (first run only)...
-".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q
-".venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl" >nul 2>nul && echo ok> ".venv\.deps_installed"
+".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl python-multipart -q
+".venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl, python_multipart" >nul 2>nul && echo ok> ".venv\.deps_installed"
 
 :ensure_env
 :: === ENSURE .ENV ===
