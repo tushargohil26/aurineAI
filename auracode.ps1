@@ -60,15 +60,6 @@ DATA_DIR=$PWD\data
     Write-Host "  Created .env config." -ForegroundColor Yellow
 }
 
-# === AUTO-UPDATE from GitHub ===
-Write-Host "  Checking for updates..." -ForegroundColor DarkGray
-try {
-    & $venvPy -c "import urllib.request,zipfile,os,shutil,tempfile;url='https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip';td=tempfile.mkdtemp();urllib.request.urlretrieve(url,os.path.join(td,'u.zip'));zipfile.ZipFile(os.path.join(td,'u.zip')).extractall(td);src=[d for d in os.listdir(td) if os.path.isdir(os.path.join(td,d)) and d.startswith('aurineAI')];[shutil.copy2(os.path.join(src[0],f),f) for f in ['auracode.py'] if os.path.exists(os.path.join(src[0],f))];[shutil.copytree(os.path.join(src[0],'app'),'app',dirs_exist_ok=True) if os.path.exists(os.path.join(src[0],'app')) else None];shutil.rmtree(td,ignore_errors=True)" 2>$null
-    Write-Host "  Ready." -ForegroundColor Green
-} catch {
-    Write-Host "  Update check skipped." -ForegroundColor DarkGray
-}
-
 # === ENSURE DEVICE DATA DIR ===
 $dataDir = "$env:USERPROFILE\.aurine-data"
 if (-not (Test-Path $dataDir)) {

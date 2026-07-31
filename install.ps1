@@ -178,6 +178,7 @@ if (Test-Path "$InstallDir\.env") {
 foreach ($d in @($InstallDir, "$InstallDir\app", "$InstallDir\.auracode\sessions")) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 }
+New-Item -ItemType File -Path "$InstallDir\.auracode\last_update" -Force | Out-Null
 
 Copy-Item "$srcDir\auracode.py" "$InstallDir\auracode.py" -Force
 
@@ -297,7 +298,7 @@ if exist ".venv\.deps_installed" goto :launch
 :: === FIRST RUN: install everything ===
 if not exist ".venv\Scripts\python.exe" (
     echo   Setting up Python...
-    python -m venv .venv 2>nul
+    python -m venv .venv
 )
 if not exist ".venv\Scripts\python.exe" (
     echo   [X] Python 3.10+ needed. Install from python.org
@@ -305,17 +306,12 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-echo   Installing packages (first run only)...
-".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q 2>nul
-if not errorlevel 1 echo. > ".venv\.deps_installed"
+echo   Installing packages (one-time only)...
+".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q
+".venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl" >nul 2>nul && echo ok> ".venv\.deps_installed"
 
 :launch
 if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
-
-:: === AUTO-UPDATE: download latest from GitHub if online ===
-if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -c "import urllib.request,zipfile,os,shutil,tempfile;url='https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip';td=tempfile.mkdtemp();urllib.request.urlretrieve(url,os.path.join(td,'u.zip'));zipfile.ZipFile(os.path.join(td,'u.zip')).extractall(td);src=[d for d in os.listdir(td) if os.path.isdir(os.path.join(td,d)) and d.startswith('aurineAI')];[shutil.copy2(os.path.join(src[0],f),f) for f in ['auracode.py'] if os.path.exists(os.path.join(src[0],f))];[shutil.copytree(os.path.join(src[0],'app'),'app',dirs_exist_ok=True) if os.path.exists(os.path.join(src[0],'app')) else None];shutil.rmtree(td,ignore_errors=True)" 2>nul
-)
 
 ".venv\Scripts\python.exe" auracode.py %*
 "@
@@ -330,18 +326,16 @@ Set-Location "$InstallDir"
 # Fast startup check
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
     Write-Host "  Setting up..." -ForegroundColor DarkGray
-    python -m venv .venv 2>`$null
+    python -m venv .venv
 }
 if (-not (Test-Path ".venv\.deps_installed")) {
-    Write-Host "  Installing packages..." -ForegroundColor DarkGray
-    & ".\.venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q 2>`$null
-    Set-Content -Path ".venv\.deps_installed" -Value "ok" -Force
+    Write-Host "  Installing packages (one-time)..." -ForegroundColor DarkGray
+    & ".\.venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q
+    try {
+        & ".\.venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl"
+        if (`$LASTEXITCODE -eq 0) { Set-Content -Path ".venv\.deps_installed" -Value "ok" -Force }
+    } catch {}
 }
-
-# Auto-update from GitHub
-try {
-    & ".\.venv\Scripts\python.exe" -c "import urllib.request,zipfile,os,shutil,tempfile;url='https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip';td=tempfile.mkdtemp();urllib.request.urlretrieve(url,os.path.join(td,'u.zip'));zipfile.ZipFile(os.path.join(td,'u.zip')).extractall(td);src=[d for d in os.listdir(td) if os.path.isdir(os.path.join(td,d)) and d.startswith('aurineAI')];[shutil.copy2(os.path.join(src[0],f),f) for f in ['auracode.py'] if os.path.exists(os.path.join(src[0],f))];[shutil.copytree(os.path.join(src[0],'app'),'app',dirs_exist_ok=True) if os.path.exists(os.path.join(src[0],'app')) else None];shutil.rmtree(td,ignore_errors=True)" 2>`$null
-} catch {}
 
 & ".\.venv\Scripts\python.exe" auracode.py
 "@

@@ -16,8 +16,8 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 echo   Installing packages (first run only)...
-".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q 2>nul
-if not errorlevel 1 echo. > ".venv\.deps_installed"
+".venv\Scripts\python.exe" -m pip install rich questionary fastapi uvicorn pypdf openpyxl -q
+".venv\Scripts\python.exe" -c "import rich, questionary, fastapi, uvicorn, pypdf, openpyxl" >nul 2>nul && echo ok> ".venv\.deps_installed"
 
 :ensure_env
 :: === ENSURE .ENV ===
@@ -28,11 +28,6 @@ if not exist ".env" (
 
 :: === ENSURE SESSIONS DIR ===
 if not exist ".auracode\sessions" mkdir ".auracode\sessions" >nul
-
-:: === AUTO-UPDATE from GitHub (silent, fast) ===
-if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -c "import urllib.request,zipfile,os,shutil,tempfile;url='https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip';td=tempfile.mkdtemp();urllib.request.urlretrieve(url,os.path.join(td,'u.zip'));zipfile.ZipFile(os.path.join(td,'u.zip')).extractall(td);src=[d for d in os.listdir(td) if os.path.isdir(os.path.join(td,d)) and d.startswith('aurineAI')];[shutil.copy2(os.path.join(src[0],f),f) for f in ['auracode.py'] if os.path.exists(os.path.join(src[0],f))];[shutil.copytree(os.path.join(src[0],'app'),'app',dirs_exist_ok=True) if os.path.exists(os.path.join(src[0],'app')) else None];shutil.rmtree(td,ignore_errors=True)" 2>nul
-)
 
 :: === LAUNCH ===
 ".venv\Scripts\python.exe" auracode.py

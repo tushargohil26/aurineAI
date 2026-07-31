@@ -17,3 +17,4 @@ Thumbs.db
 node_modules/
 .auracode/sessions/
 .auracode/config.json
+.auracode/last_update

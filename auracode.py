@@ -23,6 +23,7 @@ WORKSPACE = Path.cwd().resolve()
 _HAS_AI = False
 _HAS_CFG = False
 _HAS_Q = False
+_AI_LOAD_ERROR = ""
 
 # ============================================================================
 # SESSIONS DIR
@@ -58,7 +59,7 @@ AGENTS = [
 
 
 def _load_ai():
-    global _HAS_AI, _HAS_CFG
+    global _HAS_AI, _HAS_CFG, _AI_LOAD_ERROR
     if _HAS_AI:
         return
     try:
@@ -72,8 +73,15 @@ def _load_ai():
             get_data_dir, get_chats_dir,
         )
         _HAS_AI = True
-    except ImportError:
-        pass
+        _AI_LOAD_ERROR = ""
+    except Exception as e:
+        _AI_LOAD_ERROR = f"{type(e).__name__}: {e}"
+        try:
+            from app.llm import chat_completion, chat_completion_stream
+            _HAS_AI = True
+            _AI_LOAD_ERROR = "app.device module failed to load. Memory/history disabled."
+        except Exception as e2:
+            _AI_LOAD_ERROR += f" | llm: {type(e2).__name__}: {e2}"
     try:
         from app.config import get_settings
         _HAS_CFG = True
@@ -314,6 +322,10 @@ RULES:
 4. When user gives a file path -> read it immediately
 5. When user asks "can you" -> DO IT, don't just say yes
 6. Return JSON: {"message": "what you're doing", "actions": [{"tool": "...", ...}]}
+7. You can access and edit ANY file/folder on this PC using absolute paths (C:\\..., D:\\..., C:\\Users\\...). Never say you are limited to the workspace.
+8. ALWAYS give the COMPLETE answer. Never stop halfway. Keep returning actions until the whole task is done.
+9. When creating files or code, write the ENTIRE file with full, working content. Never use placeholders like "# rest of code" or "..." to skip work.
+10. After tool results, continue working until finished, then return your final complete answer.
 """
 
 # ============================================================================
@@ -559,14 +571,71 @@ def _exec(actions):
                 r = _read_file(a.get("path", ""))
             elif t == "write_file":
                 r = _write_file(a.get("path", ""), a.get("content", ""))
+            elif t == "edit_file":
+                r = _edit_file(a.get("path", ""), a.get("old_text", a.get("old", "")), a.get("new_text", a.get("new", "")))
+            elif t == "search_files":
+                r = _search_files(a.get("pattern", ""), a.get("path", "."))
+            elif t == "web_search":
+                r = _web_search(a.get("query", ""))
+            elif t == "run_python":
+                r = _run_python_safe(a.get("code", ""))
             elif t == "run_command":
                 r = _run_cmd(a.get("command", ""))
             else:
                 r = f"Unknown tool: {t}"
         except Exception as e:
             r = f"Error: {e}"
-        res.append(f"  [cyan]▶ {t}[/] [dim]{r[:500]}[/]")
+        res.append(f"  [cyan]▶ {t}[/] [dim]{r[:3000]}[/]")
     return "\n".join(res)
+
+
+def _search_files(pattern, path="."):
+    root = Path(path).resolve() if Path(path).is_absolute() else (WORKSPACE / path).resolve()
+    if not root.is_dir():
+        return f"Directory not found: {path}"
+    matches = []
+    pattern_lower = (pattern or "").lower()
+    try:
+        for file in root.rglob("*"):
+            if file.is_file() and len(matches) < 50:
+                if pattern_lower in file.name.lower():
+                    matches.append(str(file))
+    except PermissionError:
+        pass
+    return "\n".join(matches[:50]) or f"No files found matching '{pattern}'."
+
+
+def _web_search(query):
+    import urllib.request, urllib.parse
+    try:
+        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        import re
+        html = re.sub(r"<script[^>]*>[\s\S]*?</script>", "", html, flags=re.IGNORECASE)
+        html = re.sub(r"<style[^>]*>[\s\S]*?</style>", "", html, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:3000]
+    except Exception as exc:
+        return f"Web search failed: {exc}"
+
+
+def _run_python_safe(code):
+    blocked = ["os.system", "shutil.rmtree"]
+    for pattern in blocked:
+        if pattern in code:
+            return f"Blocked: '{pattern}' is not allowed."
+    try:
+        local_vars = {}
+        exec(code, {"__builtins__": __builtins__, "math": __import__("math"), "json": json,
+                    "re": __import__("re"), "datetime": __import__("datetime").datetime,
+                    "Path": Path}, local_vars)
+        out = local_vars.get("result", local_vars.get("output", ""))
+        return str(out)[:3000] if out else "Done."
+    except Exception as exc:
+        return f"Python error: {exc}"
 
 
 def _get_provider_info():
@@ -1127,6 +1196,8 @@ def _show_doctor():
     table1.add_row("Workspace", "[green]OK[/]", str(WORKSPACE))
     if _HAS_AI:
         table1.add_row("Device", "[green]OK[/]", _get_device_str())
+    else:
+        table1.add_row("AI Module", "[red]FAILED[/]", _AI_LOAD_ERROR or "app.llm/app.device import error")
     console.print()
     console.print(Panel(table1, title="[bold cyan]System[/]", border_style="cyan"))
     table2 = Table(box=MINIMAL, border_style="cyan", padding=(0, 1))
@@ -1629,29 +1700,72 @@ Just tell me what to do!"""
     return None
 
 
+def _parse_json_response(text):
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    try:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            candidate = text[start:end + 1]
+            try:
+                return json.loads(candidate)
+            except Exception:
+                stack = []
+                for ch in candidate:
+                    if ch == "{":
+                        stack.append("}")
+                    elif ch == "[":
+                        stack.append("]")
+                    elif ch in "}]":
+                        if stack and stack[-1] == ch:
+                            stack.pop()
+                if stack:
+                    fixed = candidate + "".join(reversed(stack))
+                    try:
+                        return json.loads(fixed)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return None
+
+
 def _ask(inp, tool_results="", history=None):
     if not _HAS_AI:
+        if _AI_LOAD_ERROR:
+            return {"message": f"AI module could not load: {_AI_LOAD_ERROR}", "actions": []}
         return {"message": "AI module not available.", "actions": []}
-    mem = build_memory_context()
+    mem = ""
+    try:
+        mem = build_memory_context()
+    except Exception:
+        pass
     sys = SYSTEM_PROMPT
     agent_sys = _state["agent"].get("system", "")
     if agent_sys:
         sys += f"\n\nAGENT ROLE:\n{agent_sys}"
     if mem:
         sys += f"\n\nUSER MEMORY:\n{mem}"
+    sys += "\n\nIMPORTANT: Give COMPLETE answers. Do not stop early, do not leave work half-finished, do not use placeholders. Keep running tools until the entire task is done."
     msgs = [{"role": "system", "content": sys}]
     if history:
         for m in history[-20:]:
             msgs.append({"role": m.get("role", "user"), "content": m.get("content", "")})
     if tool_results:
-        msgs.append({"role": "user", "content": f"Tool results:\n{tool_results}\n\nUser: {inp}"})
+        msgs.append({"role": "user", "content": f"Tool results:\n{tool_results}\n\nContinue and finish the task. User: {inp}"})
     else:
         msgs.append({"role": "user", "content": inp})
     content = chat_completion(msgs, temperature=0.1, json_mode=True)
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        return {"message": content, "actions": []}
+    parsed = _parse_json_response(content)
+    if parsed:
+        return parsed
+    return {"message": content, "actions": []}
 
 
 def _run_turn(inp, chat_id):
@@ -1676,7 +1790,13 @@ def _run_turn(inp, chat_id):
     prov, model, _ = _get_provider_info()
     prov_label = f"{prov.upper()}" if prov else "?"
     model_label = model or "?"
-    for _ in range(5):
+    max_iters = 5
+    try:
+        from app.config import get_settings
+        max_iters = max(3, int(get_settings().max_tool_iterations))
+    except Exception:
+        pass
+    for _ in range(max_iters):
         with console.status(f"[bold cyan]{_state['agent']['icon']} {prov_label} {model_label}...[/]", spinner="dots"):
             try:
                 resp = _ask(inp, tool_results, history)
@@ -1839,6 +1959,7 @@ def _print_header():
 
 def main():
     _load_ai()
+    _maybe_auto_update()
     chat_id = f"cli_{uuid4().hex[:8]}"
     if _HAS_AI:
         chat_id = f"cli_{get_device_id()}_{uuid4().hex[:8]}"
@@ -1851,6 +1972,9 @@ def main():
         _state["session_name"] = last.get("name", last["id"][:8])
 
     _print_header()
+
+    if not _HAS_AI and _AI_LOAD_ERROR:
+        console.print(f"[yellow]![/] [dim]AI module error: {_AI_LOAD_ERROR}  (run /doctor for details)[/]\n")
 
     # Auto-setup: check if any AI provider is configured
     if not _check_ai_ready():
@@ -2010,9 +2134,53 @@ def _auto_update():
     return False
 
 
+def _maybe_auto_update():
+    """Check GitHub for updates at most once every 6 hours (fast startup)."""
+    import urllib.request, zipfile, shutil, tempfile
+    stamp = WORKSPACE / ".auracode" / "last_update"
+    try:
+        if stamp.exists():
+            age = time.time() - stamp.stat().st_mtime
+            if age < 6 * 3600:
+                return
+    except Exception:
+        return
+
+    if (WORKSPACE / ".git").exists():
+        _auto_update()
+        try:
+            stamp.write_text(datetime.now().isoformat())
+        except Exception:
+            pass
+        return
+
+    try:
+        td = tempfile.mkdtemp()
+        url = "https://github.com/tushargohil26/aurineAI/archive/refs/heads/main.zip"
+        zip_path = os.path.join(td, "u.zip")
+        urllib.request.urlretrieve(url, zip_path)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(td)
+        src = [d for d in os.listdir(td) if os.path.isdir(os.path.join(td, d)) and d.startswith("aurineAI")]
+        if src:
+            root = os.path.join(td, src[0])
+            shutil.copy2(os.path.join(root, "auracode.py"), str(WORKSPACE / "auracode.py"))
+            app_src = os.path.join(root, "app")
+            app_dst = WORKSPACE / "app"
+            app_dst.mkdir(exist_ok=True)
+            for f in os.listdir(app_src):
+                if f.endswith(".py"):
+                    shutil.copy2(os.path.join(app_src, f), str(app_dst / f))
+            stamp.write_text(datetime.now().isoformat())
+        shutil.rmtree(td, ignore_errors=True)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--server":
         _load_ai()
+        _maybe_auto_update()
         sock = _start_server()
         console.print("[green]AuraCode server started on port 18765[/]")
         console.print("[dim]Other devices can connect now[/]")
