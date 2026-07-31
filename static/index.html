@@ -8,6 +8,8 @@
     <meta name="theme-color" content="#070b12" />
     <meta name="description" content="Aurine AI Assistant - Advanced AI with plugins, tools, and agents" />
     <link rel="manifest" href="/static/manifest.json" />
+    <link rel="icon" type="image/png" href="/static/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png" />
     <title>Aurine AI</title>
     <link rel="stylesheet" href="/static/styles.css?v=aurine-layout-restore-2" />
   </head>
@@ -40,6 +42,7 @@
         <button id="newChatButton" class="nav-action active" type="button" data-panel="chat">New chat</button>
         <button class="nav-action" type="button" data-panel="models">Models</button>
         <button class="nav-action" type="button" data-panel="agents">Agents</button>
+        <button class="nav-action" type="button" data-panel="automation">Automation</button>
         <button class="nav-action" type="button" data-panel="scheduled">Scheduled</button>
         <button class="nav-action" type="button" data-panel="plugins">Plugins</button>
         <button class="nav-action" type="button" data-panel="apiKeys">API keys</button>
@@ -92,6 +95,7 @@
           <div class="top-actions">
             <label class="file-chip">+ File<input id="fileInput" type="file" multiple hidden /></label>
             <label class="file-chip">+ Folder<input id="folderInput" type="file" multiple webkitdirectory directory hidden /></label>
+            <button id="installAppButton" type="button" hidden>Install app</button>
             <button id="clearDataButton" type="button">Clear data</button>
             <button id="logoutButton" type="button">Logout</button>
           </div>
@@ -236,11 +240,27 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/php.min.js"></script>
-    <script src="/static/app.js?v=aurine-streaming-2"></script>
+    <script src="/static/app.js?v=aurine-pwa-automation-1"></script>
     <script>
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/static/sw.js").catch(() => {});
+        navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
       }
+      let deferredInstall = null;
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        deferredInstall = e;
+        const btn = document.getElementById("installAppButton");
+        if (btn) btn.hidden = false;
+      });
+      window.addEventListener("appinstalled", () => {
+        const btn = document.getElementById("installAppButton");
+        if (btn) btn.hidden = true;
+        deferredInstall = null;
+      });
+      window.addEventListener("load", () => {
+        const btn = document.getElementById("installAppButton");
+        if (btn && deferredInstall) btn.hidden = false;
+      });
     </script>
   </body>
 </html>

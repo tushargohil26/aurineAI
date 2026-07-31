@@ -8,10 +8,13 @@ import re
 import secrets
 import shutil
 import sqlite3
+import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
 import subprocess
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -25,6 +28,7 @@ from pydantic import BaseModel, Field
 from .agent_tools import TOOL_DEFINITIONS, execute_tool, has_tool_support
 from .agents import AGENT_DEFINITIONS, classify_query, get_agent, list_agents, build_agent_messages
 from .artifacts import create_artifact, get_artifact_file, list_artifacts
+from .automation import get_run, list_runs, start_automation
 from .codegen import (
     generate_project,
     get_project_dir,
@@ -75,8 +79,136 @@ async def lifespan(app: FastAPI):
     db.close()
     logger.info(f"Database ready: {settings.vector_db}")
     logger.info(f"Provider: {settings.ai_provider} | Reasoning: {settings.reasoning_enabled} | Memory: {settings.memory_enabled}")
+    _start_background_threads()
     yield
     logger.info("Aurine AI Assistant shutting down...")
+
+
+def _start_background_threads() -> None:
+    for name, target in (
+        ("scheduler", _scheduler_loop),
+        ("auto-update", _web_auto_update),
+    ):
+        thread = threading.Thread(target=target, name=f"aurine-{name}", daemon=True)
+        thread.start()
+
+
+# ---------------------------------------------------------------------------
+# Auto-run scheduled tasks
+# ---------------------------------------------------------------------------
+
+def _scheduler_loop() -> None:
+    while True:
+        try:
+            _run_due_scheduled_items()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(30)
+
+
+def _run_due_scheduled_items() -> None:
+    now = utc_now()
+    with db_connection() as connection:
+        rows = connection.execute(
+            "SELECT id, user_id, title, detail FROM scheduled_items WHERE done = 0 AND due_at != '' AND due_at <= ?",
+            (now,),
+        ).fetchall()
+    for row in rows:
+        item_id = row["id"]
+        user_id = row["user_id"]
+        task = row["detail"].strip() or row["title"].strip()
+        try:
+            model_config = {"provider": "aurine"}
+            answer = answer_question(task, [], model_config, user_id)
+            result_text = answer["answer"]
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Scheduled task {item_id} failed: {exc}")
+            result_text = f"Error: {exc}"
+        with db_connection() as connection:
+            connection.execute(
+                "UPDATE scheduled_items SET done = 1, result = ?, executed_at = ? WHERE id = ?",
+                (result_text, utc_now(), item_id),
+            )
+        logger.info(f"Scheduled task executed: {item_id} ({task[:40]})")
+
+
+# ---------------------------------------------------------------------------
+# Auto-sync / auto-update from GitHub (installed copies only)
+# ---------------------------------------------------------------------------
+
+def _installed_dir() -> Path:
+    """Path of the installed copy (parent of the app package)."""
+    return Path(__file__).resolve().parent.parent
+
+
+def _web_auto_update() -> None:
+    try:
+        install_dir = _installed_dir()
+        if (install_dir / ".git").exists():
+            return
+        stamp = install_dir / ".auracode" / "web_last_update"
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        if stamp.exists():
+            try:
+                if time.time() - stamp.stat().st_mtime < 6 * 3600:
+                    return
+            except Exception:  # noqa: BLE001
+                return
+        result = _apply_web_update(install_dir)
+        if not result["error"]:
+            stamp.write_text(datetime.now().isoformat())
+        logger.info(f"Auto-update check: {result}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Auto-update skipped: {exc}")
+
+
+def _apply_web_update(install_dir: Path) -> dict:
+    """Download the latest GitHub code into an installed copy. Returns a status dict."""
+    repo_url = "https://github.com/tushargohil26/aurineAI"
+    temp_dir = tempfile.mkdtemp()
+    try:
+        zip_path = os.path.join(temp_dir, "aurine.zip")
+        urllib.request.urlretrieve(f"{repo_url}/archive/refs/heads/main.zip", zip_path)
+        with zipfile.ZipFile(zip_path) as archive:
+            archive.extractall(temp_dir)
+        roots = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d)) and d.startswith("aurineAI")]
+        if not roots:
+            return {"applied": False, "error": "No source found in update archive."}
+        root = os.path.join(temp_dir, roots[0])
+
+        updated: list[str] = []
+        app_src = Path(root) / "app"
+        app_dst = install_dir / "app"
+        app_dst.mkdir(parents=True, exist_ok=True)
+        for source in app_src.glob("*.py"):
+            if source.name == "main.py":
+                continue
+            (app_dst / source.name).write_bytes(source.read_bytes())
+            updated.append(f"app/{source.name}")
+
+        static_src = Path(root) / "static"
+        if static_src.exists():
+            static_dst = install_dir / "static"
+            static_dst.mkdir(parents=True, exist_ok=True)
+            for source in static_src.rglob("*"):
+                if source.is_file():
+                    relative = source.relative_to(static_src)
+                    target = static_dst / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source.read_bytes())
+                    updated.append(f"static/{relative.as_posix()}")
+
+        for name in ("requirements.txt", "auracode.py", "install.ps1"):
+            source = Path(root) / name
+            if source.exists():
+                (install_dir / name).write_bytes(source.read_bytes())
+                updated.append(name)
+
+        return {"applied": bool(updated), "files": updated, "error": ""}
+    except Exception as exc:  # noqa: BLE001
+        return {"applied": False, "error": str(exc)}
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 app = FastAPI(title="Aurine AI Assistant", version="3.0.0", lifespan=lifespan)
@@ -146,6 +278,14 @@ class ScheduledRequest(BaseModel):
     title: str
     detail: str = ""
     due_at: str = ""
+
+
+class AutomationRequest(BaseModel):
+    goal: str
+    model_provider: str = ""
+    model_name: str = ""
+    model_base_url: str = ""
+    model_api_key: str = ""
 
 
 class AgentRequest(BaseModel):
@@ -263,6 +403,11 @@ def db_connection() -> sqlite3.Connection:
         )
         """
     )
+    scheduled_columns = {row["name"] for row in connection.execute("PRAGMA table_info(scheduled_items)").fetchall()}
+    if "result" not in scheduled_columns:
+        connection.execute("ALTER TABLE scheduled_items ADD COLUMN result TEXT NOT NULL DEFAULT ''")
+    if "executed_at" not in scheduled_columns:
+        connection.execute("ALTER TABLE scheduled_items ADD COLUMN executed_at TEXT NOT NULL DEFAULT ''")
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS custom_agents (
@@ -535,6 +680,15 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.get("/")
 def home() -> FileResponse:
     return FileResponse("static/index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return FileResponse(
+        "static/sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store", "Service-Worker-Allowed": "/"},
+    )
 
 
 @app.get("/health")
@@ -852,11 +1006,14 @@ def openai_chat_completions(request: OpenAIChatCompletionRequest, authorization:
             for chunk in answer_question_stream(question, history, model_config, user_id=user_id):
                 full_response += chunk
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': chunk}, 'index': 0}]})}\n\n"
+            if full_response:
+                memory_store.get(user_id).extract_and_store_facts(question, full_response)
             yield f"data: {json.dumps({'choices': [{'delta': {}, 'finish_reason': 'stop', 'index': 0}]})}\n\n"
             yield "data: [DONE]\n\n"
         return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
     answer = answer_question(question, history, model_config, user_id=user_id)
+    memory_store.get(user_id).extract_and_store_facts(question, answer["answer"])
     return {
         "id": f"chatcmpl-{uuid4().hex}",
         "object": "chat.completion",
@@ -906,7 +1063,7 @@ def scheduled(authorization: str | None = Header(default=None)) -> dict:
     user = require_user(authorization)
     with db_connection() as connection:
         rows = connection.execute(
-            "SELECT id, title, detail, due_at, done, created_at FROM scheduled_items WHERE user_id = ? ORDER BY created_at DESC",
+            "SELECT id, title, detail, due_at, done, result, executed_at, created_at FROM scheduled_items WHERE user_id = ? ORDER BY created_at DESC",
             (user["id"],),
         ).fetchall()
     return {"items": [dict(row) for row in rows]}
@@ -925,6 +1082,91 @@ def create_scheduled(request: ScheduledRequest, authorization: str | None = Head
             (item_id, user["id"], title, request.detail.strip(), request.due_at.strip(), utc_now()),
         )
     return {"item": {"id": item_id, "title": title, "detail": request.detail, "due_at": request.due_at, "done": 0}}
+
+
+@app.post("/scheduled/{item_id}/run")
+def run_scheduled_now(item_id: str, authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    with db_connection() as connection:
+        row = connection.execute(
+            "SELECT id, user_id, title, detail FROM scheduled_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+    if not row or row["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Scheduled item not found.")
+    task = row["detail"].strip() or row["title"].strip()
+    try:
+        answer = answer_question(task, [], {"provider": "aurine"}, user["id"])
+        result_text = answer["answer"]
+    except Exception as exc:  # noqa: BLE001
+        result_text = f"Error: {exc}"
+    with db_connection() as connection:
+        connection.execute(
+            "UPDATE scheduled_items SET done = 1, result = ?, executed_at = ? WHERE id = ?",
+            (result_text, utc_now(), item_id),
+        )
+    return {"item_id": item_id, "result": result_text, "done": True}
+
+
+@app.delete("/scheduled/{item_id}")
+def delete_scheduled(item_id: str, authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    with db_connection() as connection:
+        connection.execute("DELETE FROM scheduled_items WHERE id = ? AND user_id = ?", (item_id, user["id"]))
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Autonomous automation (goal-driven agent loops)
+# ---------------------------------------------------------------------------
+
+@app.post("/automation/start")
+def automation_start(request: AutomationRequest, authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    goal = request.goal.strip()
+    if not goal:
+        raise HTTPException(status_code=400, detail="Goal is required.")
+    model_config = {
+        "provider": request.model_provider,
+        "model": request.model_name,
+        "base_url": request.model_base_url,
+        "api_key": request.model_api_key,
+    }
+    run_id = start_automation(user["id"], goal, model_config)
+    logger.info(f"Automation started: {run_id} for {user['id']} - {goal[:60]}")
+    return {"run_id": run_id, "status": "running", "goal": goal}
+
+
+@app.get("/automation/runs")
+def automation_runs(authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    return {"runs": list_runs(user["id"])}
+
+
+@app.get("/automation/{run_id}")
+def automation_status(run_id: str, authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    run = get_run(run_id, user["id"])
+    if not run:
+        raise HTTPException(status_code=404, detail="Automation run not found.")
+    return run
+
+
+@app.post("/aurine/check-update")
+def check_update(authorization: str | None = Header(default=None)) -> dict:
+    user = require_user(authorization)
+    install_dir = _installed_dir()
+    if (install_dir / ".git").exists():
+        return {"mode": "dev", "message": "Running from a source checkout; updates are applied via git."}
+    result = _apply_web_update(install_dir)
+    if not result["error"]:
+        try:
+            (install_dir / ".auracode" / "web_last_update").parent.mkdir(parents=True, exist_ok=True)
+            (install_dir / ".auracode" / "web_last_update").write_text(datetime.now().isoformat())
+        except Exception:  # noqa: BLE001
+            pass
+    result["mode"] = "installed"
+    return result
 
 
 @app.get("/plugins")
@@ -2702,6 +2944,8 @@ def chat_stream(request: ChatRequest, req: Request, authorization: str | None = 
             yield f"data: {json.dumps({'error': error_msg})}\n\n"
 
         add_chat_message(chat_id, "assistant", full_response)
+        if full_response:
+            memory_store.get(user_id).extract_and_store_facts(display_question, full_response)
         yield f"data: {json.dumps({'done': True, 'chat_id': chat_id})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

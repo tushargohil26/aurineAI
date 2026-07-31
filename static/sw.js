@@ -1,5 +1,12 @@
-const CACHE_NAME = "aurine-v1";
-const PRECACHE = ["/", "/static/styles.css", "/static/app.js", "/static/manifest.json"];
+const CACHE_NAME = "aurine-v2";
+const PRECACHE = [
+  "/",
+  "/static/styles.css",
+  "/static/app.js",
+  "/static/manifest.json",
+  "/static/icons/icon-192.png",
+  "/static/icons/icon-512.png"
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

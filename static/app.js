@@ -1984,21 +1984,91 @@ function openModelDropdown(anchor) {
   });
 }
 
+async function renderAutomationPanel() {
+  panelTitle.textContent = "Automation";
+  panelBody.innerHTML = `
+    <div class="panel-card">
+      <label for="autoGoal">Goal / task to complete autonomously</label>
+      <textarea id="autoGoal" rows="3" placeholder="e.g. Research the latest Aurine launch news, summarize it into a note, and save it to my documents."></textarea>
+      <p class="hint">Aurine will run its own loop, deciding which tools to call (search, documents, code runner, …) up to 8 rounds, then report back.</p>
+      <button id="startAutomation">Start automation</button>
+    </div>
+    <div id="automationList"></div>`;
+  async function refresh() {
+    const data = await api("/automation/runs");
+    q("#automationList").innerHTML = (data.runs || [])
+      .map((r) => panelCard(
+        `${escapeHtml(r.goal.slice(0, 60))} <span style="opacity:.6">[${escapeHtml(r.status)}]</span>`,
+        `<b>Rounds:</b> ${r.rounds || 0}/${r.MAX_ROUNDS || 8}<br>` +
+          (r.progress ? `<b>Progress:</b> ${escapeHtml(r.progress)}<br>` : "") +
+          (r.result ? `<b>Result:</b> ${escapeHtml(r.result.slice(0, 400))}<br>` : "") +
+          (r.error ? `<b style="color:#ff6b6b">Error:</b> ${escapeHtml(r.error.slice(0, 400))}` : "") +
+          `<div style="opacity:.5;font-size:.85em">Started ${escapeHtml(r.created_at || "")}${r.finished_at ? " - Finished " + escapeHtml(r.finished_at) : ""}</div>`
+      ))
+      .join("") || panelCard("No automation runs", "Start one above.");
+  }
+  q("#startAutomation").onclick = async () => {
+    const goal = q("#autoGoal").value.trim();
+    if (!goal) return alert("Enter a goal first.");
+    q("#startAutomation").disabled = true;
+    q("#startAutomation").textContent = "Starting…";
+    try {
+      const res = await api("/automation/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal }),
+      });
+      q("#autoGoal").value = "";
+      const poll = setInterval(async () => {
+        const d = await api(`/automation/${res.run_id}`);
+        await refresh();
+        if (d.status === "done" || d.status === "error" || d.status === "limit") {
+          clearInterval(poll);
+          q("#startAutomation").disabled = false;
+          q("#startAutomation").textContent = "Start automation";
+        }
+      }, 3000);
+      await refresh();
+    } catch (e) {
+      q("#startAutomation").disabled = false;
+      q("#startAutomation").textContent = "Start automation";
+      alert(e.message || String(e));
+    }
+  };
+  await refresh();
+}
+
 async function renderScheduledPanel() {
   panelTitle.textContent = "Scheduled";
   panelBody.innerHTML = `
     <div class="panel-card">
       <input id="scheduleTitle" placeholder="Task title" />
       <input id="scheduleDue" placeholder="Due time, e.g. tomorrow 10 AM" />
-      <textarea id="scheduleDetail" placeholder="Details"></textarea>
+      <textarea id="scheduleDetail" placeholder="Details (what Aurine should do when it runs)"></textarea>
       <button id="addSchedule">Add scheduled item</button>
+      <p class="hint">Scheduled items run automatically when due. Every 30s the server checks and executes due tasks.</p>
     </div>
     <div id="scheduleList"></div>`;
   async function refresh() {
     const data = await api("/scheduled");
     q("#scheduleList").innerHTML = (data.items || [])
-      .map((x) => panelCard(x.title, `${x.due_at || "No due time"} ${x.detail || ""}`))
+      .map((x) => panelCard(
+        `${x.title} ${x.done ? "(done)" : ""}`,
+        `${x.due_at || "No due time"} - ${x.detail || ""}` +
+          (x.result ? `<hr style="margin:8px 0;opacity:.2"><b>Result:</b> ${escapeHtml(x.result.slice(0, 500))}` : "") +
+          `<br><br><button class="mini-btn" data-run="${x.id}">Run now</button> ` +
+          `<button class="mini-btn" data-del="${x.id}">Delete</button>`
+      ))
       .join("") || panelCard("No scheduled items", "Add one above.");
+    document.querySelectorAll("[data-run]").forEach((b) => (b.onclick = async () => {
+      const r = await api(`/scheduled/${b.dataset.run}/run`, { method: "POST" });
+      alert("Result: " + (r.result || "").slice(0, 300));
+      await refresh();
+    }));
+    document.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
+      await api(`/scheduled/${b.dataset.del}`, { method: "DELETE" });
+      await refresh();
+    }));
   }
   q("#addSchedule").onclick = async () => {
     await api("/scheduled", {
@@ -2010,9 +2080,15 @@ async function renderScheduledPanel() {
         detail: q("#scheduleDetail").value,
       }),
     });
+    q("#scheduleTitle").value = "";
+    q("#scheduleDue").value = "";
+    q("#scheduleDetail").value = "";
     await refresh();
   };
   await refresh();
+  if (!window.__schedulePoll) {
+    window.__schedulePoll = setInterval(refresh, 30000);
+  }
 }
 
 async function renderPluginsPanel() {
@@ -2368,6 +2444,7 @@ async function openPanel(panel) {
   if (panel === "models") return renderModelsPanel();
   if (panel === "apiKeys") return renderApiKeysPanel();
   if (panel === "agents") return renderAgentsPanel();
+  if (panel === "automation") return renderAutomationPanel();
   if (panel === "scheduled") return renderScheduledPanel();
   if (panel === "plugins") return renderPluginsPanel();
   if (panel === "sites") return renderSitesPanel();
@@ -2450,6 +2527,16 @@ logoutButton.onclick = () => {
   authToken = "";
   showLogin("Logged out.");
 };
+const installAppButton = q("#installAppButton");
+if (installAppButton) {
+  installAppButton.onclick = async () => {
+    if (!window.deferredInstall) return;
+    window.deferredInstall.prompt();
+    await window.deferredInstall.userChoice;
+    window.deferredInstall = null;
+    installAppButton.hidden = true;
+  };
+}
 const launchAuraButton = q("#launchAuraButton");
 if (launchAuraButton) {
   launchAuraButton.onclick = async () => {

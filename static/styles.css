@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #f7f8fb;
   --panel: rgba(255,255,255,.82);
   --ink: #171717;
@@ -2315,7 +2315,7 @@ body[data-theme="normal"] .suggestions button:hover {
 }
 
 .message.streaming::after {
-  content: "▊";
+  content: "?";
   display: inline;
   animation: blink 0.8s infinite;
   color: var(--accent, #6cb4ee);
@@ -2827,3 +2827,7 @@ body[data-theme="normal"] .suggestions button:hover {
 }
 
 
+
+.hint { font-size: 12px; opacity: .65; margin: 8px 0 4px; }
+.mini-btn { background: transparent; color: inherit; border: 1px solid var(--accent); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.mini-btn:hover { border-color: var(--accent); color: var(--accent); }
